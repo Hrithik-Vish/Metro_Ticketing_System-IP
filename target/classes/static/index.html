@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MetroPass | Ticketing System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main id="auth-screen" class="auth-screen">
+    <section class="auth-visual">
+      <div class="rail-scene" aria-hidden="true">
+        <div class="city-grid"></div>
+        <div class="rail-line rail-blue"></div>
+        <div class="rail-line rail-green"></div>
+        <div class="metro-train">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="platform-card one">Central</div>
+        <div class="platform-card two">Airport</div>
+      </div>
+      <div class="auth-copy">
+        <p class="kicker">Metro ticketing system</p>
+        <h1>Book, manage, and monitor metro journeys.</h1>
+        <p>Passenger booking and admin operations in one working Spring Boot demo.</p>
+      </div>
+    </section>
+
+    <section class="auth-panel">
+      <div class="brand-row">
+        <span class="brand-mark">M</span>
+        <strong>MetroPass</strong>
+      </div>
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" type="button" data-auth-tab="signin">Sign in</button>
+        <button class="auth-tab" type="button" data-auth-tab="signup">Create account</button>
+      </div>
+
+      <form id="signin-form" class="auth-form active-auth-form">
+        <label>User ID<input id="signin-user" autocomplete="username" value="rider1" required></label>
+        <label>Password<input id="signin-password" type="password" autocomplete="current-password" value="rider123" required></label>
+        <button class="primary-action" type="submit">Sign in</button>
+        <p class="demo-hint">Try admin/admin123 or rider1/rider123.</p>
+      </form>
+
+      <form id="signup-form" class="auth-form">
+        <div class="two-fields">
+          <label>First name<input id="signup-first" required></label>
+          <label>Last name<input id="signup-last" required></label>
+        </div>
+        <label>User ID<input id="signup-user" autocomplete="username" required></label>
+        <label>Contact<input id="signup-contact" type="email" placeholder="name@example.com"></label>
+        <label>Account type<select id="signup-role"><option value="USER">Passenger</option><option value="ADMIN">Admin</option></select></label>
+        <label>Password<input id="signup-password" type="password" autocomplete="new-password" required></label>
+        <button id="signup-submit" class="primary-action" type="submit">Create passenger account</button>
+      </form>
+    </section>
+  </main>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar">
+      <a class="brand-row" href="#dashboard" aria-label="MetroPass home">
+        <span class="brand-mark">M</span>
+        <strong>MetroPass</strong>
+      </a>
+      <nav id="nav-list" class="nav-list" aria-label="Workspace navigation"></nav>
+      <section class="account-box">
+        <span id="account-role" class="pill"></span>
+        <strong id="account-name"></strong>
+        <small id="account-id"></small>
+        <button id="signout-button" class="ghost-action" type="button">Sign out</button>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p id="today-label" class="kicker"></p>
+          <h2 id="view-title">Dashboard</h2>
+        </div>
+        <button id="quick-book-button" class="primary-action compact" type="button">New ticket</button>
+      </header>
+
+      <div id="toast" class="toast" role="status"></div>
+
+      <section id="view-dashboard" class="view active-view">
+        <div class="hero-band">
+          <div>
+            <p class="kicker">Live city network</p>
+            <h1 id="hero-title">Ready for your next ride?</h1>
+            <p id="hero-copy">Plan a trip, buy a ticket, and keep your travel history close.</p>
+          </div>
+          <div class="mini-map" aria-hidden="true">
+            <span class="node n1"></span><span class="node n2"></span><span class="node n3"></span><span class="node n4"></span>
+            <div class="map-track a"></div><div class="map-track b"></div>
+          </div>
+        </div>
+
+        <div id="stats-grid" class="stats-grid"></div>
+
+        <div class="split-grid">
+          <section class="panel">
+            <div class="panel-heading">
+              <div><p class="kicker">Journey planner</p><h3>Check fare</h3></div>
+              <span class="status-ok">Online</span>
+            </div>
+            <form id="fare-form" class="form-grid">
+              <label>From<select id="fare-from" required></select></label>
+              <label>To<select id="fare-to" required></select></label>
+              <button class="dark-action" type="submit">Calculate</button>
+            </form>
+            <div id="fare-result" class="result-box"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <div><p class="kicker">Recent activity</p><h3 id="activity-title">My tickets</h3></div>
+              <button class="text-action" type="button" data-go-view="tickets">Open</button>
+            </div>
+            <div id="recent-list" class="activity-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-book" class="view">
+        <div class="page-heading">
+          <div><p class="kicker">Passenger desk</p><h2>Book a ticket</h2><p>Create a valid journey ticket and payment record.</p></div>
+        </div>
+        <section class="panel booking-panel">
+          <form id="booking-form" class="booking-grid">
+            <label id="booking-passenger-wrap">Passenger<select id="booking-passenger"></select></label>
+            <label>From<select id="booking-from" required></select></label>
+            <label>To<select id="booking-to" required></select></label>
+            <label>Ticket type<select id="booking-type"><option value="SINGLE">Single ride</option><option value="DAY_PASS">Day pass</option><option value="RETURN">Return</option></select></label>
+            <label>Payment amount<input id="booking-amount" type="number" min="0" step="0.01" placeholder="Auto fare" required></label>
+            <button class="primary-action" type="submit">Issue ticket</button>
+          </form>
+          <div class="ticket-preview">
+            <p class="kicker">Preview</p>
+            <h3 id="preview-route">Select a journey</h3>
+            <strong id="preview-fare">-</strong>
+            <small id="preview-note">Fare is filled automatically when configured.</small>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-tickets" class="view">
+        <div class="page-heading">
+          <div><p class="kicker">Ticket ledger</p><h2 id="tickets-heading">Tickets</h2><p id="tickets-copy">Search, review, and manage issued tickets.</p></div>
+        </div>
+        <section class="panel table-panel">
+          <div class="table-toolbar">
+            <input id="ticket-search" class="search-input" placeholder="Search tickets, riders, stations">
+            <span id="ticket-count" class="count-label"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Ticket</th><th>Passenger</th><th>Journey</th><th>Issued</th><th>Status</th><th class="admin-only"></th></tr></thead>
+              <tbody id="tickets-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-network" class="view">
+        <div class="page-heading">
+          <div><p class="kicker">Metro network</p><h2>Stations and lines</h2><p>Browse stations, active routes, and configured fares.</p></div>
+        </div>
+        <div class="network-grid">
+          <section class="panel map-panel"><div id="network-map" class="network-map"></div></section>
+          <section class="panel"><div class="panel-heading"><div><p class="kicker">Stations</p><h3>Directory</h3></div><span id="station-count" class="count-label"></span></div><div id="station-list" class="stack-list"></div></section>
+        </div>
+      </section>
+
+      <section id="view-admin" class="view">
+        <div class="page-heading">
+          <div><p class="kicker">Admin controls</p><h2>Operations setup</h2><p>Add stations, fares, and passenger/admin accounts.</p></div>
+        </div>
+        <div class="admin-grid">
+          <section class="panel">
+            <div class="panel-heading"><div><p class="kicker">Station</p><h3>Add station</h3></div></div>
+            <form id="station-form" class="form-grid">
+              <label>Station ID<input id="station-id" placeholder="ST-NEW" required></label>
+              <label>Name/code<input id="station-code" placeholder="Central" required></label>
+              <label>Address<input id="station-address" placeholder="Area or terminal"></label>
+              <label>Line color<input id="station-color" type="color" value="#2f80ed"></label>
+              <button class="dark-action" type="submit">Save station</button>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><p class="kicker">Fare</p><h3>Add fare</h3></div></div>
+            <form id="fare-admin-form" class="form-grid">
+              <label>Fare ID<input id="fare-id" placeholder="FR-NEW" required></label>
+              <label>From<select id="admin-fare-from" required></select></label>
+              <label>To<select id="admin-fare-to" required></select></label>
+              <label>Base fare<input id="admin-fare-amount" type="number" min="0" step="0.01" required></label>
+              <button class="dark-action" type="submit">Save fare</button>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><p class="kicker">Account</p><h3>Add user</h3></div></div>
+            <form id="admin-user-form" class="form-grid">
+              <label>User ID<input id="admin-user-id" required></label>
+              <label>Name<input id="admin-user-name" placeholder="First Last" required></label>
+              <label>Contact<input id="admin-user-contact"></label>
+              <label>Role<select id="admin-user-role"><option value="USER">Passenger</option><option value="ADMIN">Admin</option></select></label>
+              <label>Password<input id="admin-user-password" type="password" value="password123" required></label>
+              <button class="dark-action" type="submit">Save user</button>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-users" class="view">
+        <div class="page-heading">
+          <div><p class="kicker">People</p><h2>Users</h2><p>Registered passengers and staff accounts.</p></div>
+        </div>
+        <section class="panel table-panel">
+          <div class="table-toolbar">
+            <input id="user-search" class="search-input" placeholder="Search users">
+            <span id="user-count" class="count-label"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>User</th><th>Contact</th><th>Role</th><th>Registered</th><th>Status</th></tr></thead>
+              <tbody id="users-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-operations" class="view">
+        <div class="page-heading">
+          <div><p class="kicker">Fleet and operations</p><h2>Operations</h2><p>Trains, schedules, metro cards, and maintenance issues.</p></div>
+        </div>
+
+        <div class="admin-grid">
+          <section class="panel">
+            <div class="panel-heading"><div><p class="kicker">Fleet</p><h3>Add train</h3></div></div>
+            <form id="train-form" class="form-grid">
+              <label>Train ID<input id="train-id" placeholder="TR-104" required></label>
+              <label>Train number<input id="train-number" placeholder="104" required></label>
+              <label>Capacity<input id="train-capacity" type="number" min="0" required></label>
+              <label>Coaches<input id="train-coaches" type="number" min="1" required></label>
+              <label>Manufacture year<input id="train-year" type="number" min="1990" max="2100" required></label>
+              <button class="dark-action" type="submit">Save train</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading"><div><p class="kicker">Timetable</p><h3>Add schedule</h3></div></div>
+            <form id="schedule-form" class="form-grid">
+              <label>Schedule ID<input id="schedule-id" placeholder="SCH-04" required></label>
+              <label>Train<select id="schedule-train" required></select></label>
+              <label>Route<select id="schedule-route" required></select></label>
+              <label>Day of week<select id="schedule-day">
+                <option>MONDAY</option><option>TUESDAY</option><option>WEDNESDAY</option>
+                <option>THURSDAY</option><option>FRIDAY</option><option>SATURDAY</option><option>SUNDAY</option>
+              </select></label>
+              <label>Departure<input id="schedule-departure" type="datetime-local" required></label>
+              <label>Arrival<input id="schedule-arrival" type="datetime-local" required></label>
+              <button class="dark-action" type="submit">Save schedule</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading"><div><p class="kicker">Metro card</p><h3>Issue card</h3></div></div>
+            <form id="metrocard-form" class="form-grid">
+              <label>Card ID<input id="metrocard-id" placeholder="MC-1003" required></label>
+              <label>Passenger<select id="metrocard-passenger" required></select></label>
+              <label>Opening balance<input id="metrocard-balance" type="number" min="0" step="0.01" required></label>
+              <button class="dark-action" type="submit">Issue card</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading"><div><p class="kicker">Maintenance</p><h3>Report issue</h3></div></div>
+            <form id="maintenance-form" class="form-grid">
+              <label>Issue ID<input id="maintenance-id" placeholder="MI-02" required></label>
+              <label>Train<select id="maintenance-train"></select></label>
+              <label>Station<select id="maintenance-station"></select></label>
+              <label>Issue type<input id="maintenance-type" placeholder="Brake check" required></label>
+              <label>Priority<select id="maintenance-priority"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option></select></label>
+              <label>Description<input id="maintenance-description" placeholder="Details"></label>
+              <button class="dark-action" type="submit">Log issue</button>
+            </form>
+          </section>
+        </div>
+
+        <div class="split-grid">
+          <section class="panel table-panel">
+            <div class="panel-heading"><div><p class="kicker">Fleet</p><h3>Trains</h3></div><span id="train-count" class="count-label"></span></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Train</th><th>Capacity</th><th>Coaches</th><th>Year</th><th>Status</th></tr></thead>
+                <tbody id="trains-table"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel table-panel">
+            <div class="panel-heading"><div><p class="kicker">Timetable</p><h3>Schedules</h3></div><span id="schedule-count" class="count-label"></span></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Schedule</th><th>Train</th><th>Route</th><th>Day</th><th>Departure</th></tr></thead>
+                <tbody id="schedules-table"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div class="split-grid">
+          <section class="panel table-panel">
+            <div class="panel-heading"><div><p class="kicker">Cards</p><h3>Metro cards</h3></div><span id="metrocard-count" class="count-label"></span></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Card</th><th>Passenger</th><th>Balance</th><th>Expiry</th><th>Status</th></tr></thead>
+                <tbody id="metrocards-table"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel table-panel">
+            <div class="panel-heading"><div><p class="kicker">Maintenance</p><h3>Issues</h3></div><span id="maintenance-count" class="count-label"></span></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Issue</th><th>Train/Station</th><th>Type</th><th>Priority</th><th>Status</th></tr></thead>
+                <tbody id="maintenance-table"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

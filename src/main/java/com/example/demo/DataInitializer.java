@@ -131,9 +131,9 @@ public class DataInitializer implements CommandLineRunner {
 
     private void seedTrains() {
         if (trains.count() > 0) return;
-        trains.save(train("TR-101", "101", 1200, 6, 2019));
-        trains.save(train("TR-102", "102", 1200, 6, 2020));
-        trains.save(train("TR-103", "103", 900, 4, 2022));
+        train("TR-101", "101", 1200, 6, 2019);
+        train("TR-102", "102", 1200, 6, 2020);
+        train("TR-103", "103", 900, 4, 2022);
     }
 
     private void seedRouteStations() {
