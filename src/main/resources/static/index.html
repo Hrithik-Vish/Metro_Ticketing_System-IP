@@ -3,195 +3,725 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MetroPass | Ticketing System</title>
+  <title>MetroPass | Metro Ticketing</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('metroTheme');
+        var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+        var signedIn = Boolean(localStorage.getItem('metroUser'));
+        document.documentElement.setAttribute('data-scene-day', signedIn ? '1' : '0');
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
+
+  <!-- ===================== METRO SCENE (persistent moving background) ===================== -->
+  <div id="metro-scene" class="metro-scene" aria-hidden="true" data-tier="high">
+    <div class="scene-layer scene-sky"></div>
+    <div class="scene-layer scene-stars" id="scene-stars"></div>
+
+    <div class="scene-parallax" data-depth="0.02">
+    <div class="scene-layer scene-skyline">
+      <svg viewBox="0 0 2400 300" preserveAspectRatio="none">
+        <g class="scene-bld-far">
+          <rect x="0" y="120" width="80" height="180"/><rect x="90" y="80" width="60" height="220"/>
+          <rect x="160" y="150" width="100" height="150"/><rect x="270" y="60" width="50" height="240"/>
+          <rect x="330" y="100" width="90" height="200"/><rect x="440" y="140" width="70" height="160"/>
+          <rect x="520" y="40" width="55" height="260"/><rect x="590" y="110" width="85" height="190"/>
+          <rect x="700" y="90" width="60" height="210"/><rect x="780" y="150" width="100" height="150"/>
+          <rect x="1200" y="120" width="80" height="180"/><rect x="1290" y="80" width="60" height="220"/>
+          <rect x="1360" y="150" width="100" height="150"/><rect x="1470" y="60" width="50" height="240"/>
+          <rect x="1530" y="100" width="90" height="200"/><rect x="1640" y="140" width="70" height="160"/>
+          <rect x="1720" y="40" width="55" height="260"/><rect x="1790" y="110" width="85" height="190"/>
+          <rect x="1900" y="90" width="60" height="210"/><rect x="1980" y="150" width="100" height="150"/>
+        </g>
+        <!-- Roofline variety: setbacks, antenna spires, a water tower — so the
+             skyline reads as a real city silhouette, not a uniform bar chart. -->
+        <g class="scene-bld-far">
+          <rect x="285" y="45" width="20" height="15"/>
+          <rect x="535" y="25" width="16" height="15"/>
+          <rect x="1485" y="45" width="20" height="15"/>
+          <rect x="1735" y="25" width="16" height="15"/>
+          <circle cx="115" cy="72" r="10"/><rect x="110" y="60" width="10" height="12"/>
+          <circle cx="1315" cy="72" r="10"/><rect x="1310" y="60" width="10" height="12"/>
+        </g>
+        <g class="scene-bld-far-line">
+          <line x1="295" y1="45" x2="295" y2="18"/>
+          <line x1="1495" y1="45" x2="1495" y2="18"/>
+          <line x1="205" y1="150" x2="205" y2="128"/>
+          <line x1="1405" y1="150" x2="1405" y2="128"/>
+        </g>
+        <g class="scene-win-far">
+          <rect x="10" y="140" width="6" height="6"/><rect x="24" y="140" width="6" height="6"/><rect x="10" y="160" width="6" height="6"/>
+          <rect x="100" y="100" width="6" height="6"/><rect x="120" y="120" width="6" height="6"/>
+          <rect x="340" y="130" width="6" height="6"/><rect x="360" y="150" width="6" height="6"/><rect x="380" y="130" width="6" height="6"/>
+          <rect x="600" y="140" width="6" height="6"/><rect x="620" y="160" width="6" height="6"/>
+          <rect x="1210" y="140" width="6" height="6"/><rect x="1224" y="140" width="6" height="6"/>
+          <rect x="1540" y="130" width="6" height="6"/><rect x="1560" y="150" width="6" height="6"/>
+          <rect x="1800" y="140" width="6" height="6"/><rect x="1820" y="160" width="6" height="6"/>
+        </g>
+      </svg>
+    </div>
+    </div>
+
+    <div class="scene-parallax" data-depth="0.05">
+    <div class="scene-layer scene-city">
+      <svg viewBox="0 0 2400 260" preserveAspectRatio="none">
+        <g class="scene-bld-mid">
+          <rect x="20" y="60" width="70" height="200"/><rect x="110" y="20" width="50" height="240"/>
+          <rect x="180" y="90" width="90" height="170"/><rect x="290" y="40" width="55" height="220"/>
+          <rect x="370" y="100" width="75" height="160"/><rect x="470" y="10" width="45" height="250"/>
+          <rect x="540" y="70" width="85" height="190"/><rect x="650" y="40" width="60" height="220"/>
+          <rect x="1220" y="60" width="70" height="200"/><rect x="1310" y="20" width="50" height="240"/>
+          <rect x="1380" y="90" width="90" height="170"/><rect x="1490" y="40" width="55" height="220"/>
+          <rect x="1570" y="100" width="75" height="160"/><rect x="1670" y="10" width="45" height="250"/>
+          <rect x="1740" y="70" width="85" height="190"/><rect x="1850" y="40" width="60" height="220"/>
+        </g>
+        <g class="scene-win-mid">
+          <rect x="30" y="80" width="5" height="5"/><rect x="45" y="90" width="5" height="5"/><rect x="60" y="100" width="5" height="5"/>
+          <rect x="120" y="40" width="5" height="5"/><rect x="135" y="55" width="5" height="5"/>
+          <rect x="195" y="110" width="5" height="5"/><rect x="210" y="120" width="5" height="5"/><rect x="230" y="130" width="5" height="5"/>
+          <rect x="1230" y="80" width="5" height="5"/><rect x="1245" y="90" width="5" height="5"/>
+          <rect x="1395" y="110" width="5" height="5"/><rect x="1410" y="120" width="5" height="5"/>
+        </g>
+        <g class="scene-win-mid warm">
+          <rect x="300" y="60" width="5" height="5"/><rect x="315" y="75" width="5" height="5"/>
+          <rect x="480" y="30" width="5" height="5"/><rect x="490" y="45" width="5" height="5"/>
+          <rect x="560" y="90" width="5" height="5"/><rect x="580" y="110" width="5" height="5"/>
+          <rect x="1500" y="60" width="5" height="5"/><rect x="1580" y="90" width="5" height="5"/>
+        </g>
+      </svg>
+    </div>
+    </div>
+
+    <div class="scene-layer scene-platform">
+      <svg viewBox="0 0 2400 200" preserveAspectRatio="none">
+        <defs>
+          <radialGradient id="scene-pass-light-grad" cx="50%" cy="45%" r="60%">
+            <stop offset="0%" stop-color="currentColor" stop-opacity="1"/>
+            <stop offset="55%" stop-color="currentColor" stop-opacity=".35"/>
+            <stop offset="100%" stop-color="currentColor" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <rect class="scene-rail-deck" x="0" y="80" width="2400" height="18"/>
+        <g class="scene-rail-pillar">
+          <rect x="40" y="98" width="14" height="102"/><rect x="240" y="98" width="14" height="102"/>
+          <rect x="440" y="98" width="14" height="102"/><rect x="640" y="98" width="14" height="102"/>
+          <rect x="840" y="98" width="14" height="102"/><rect x="1240" y="98" width="14" height="102"/>
+          <rect x="1440" y="98" width="14" height="102"/><rect x="1640" y="98" width="14" height="102"/>
+        </g>
+        <ellipse class="scene-plat-glow" cx="150" cy="90" rx="120" ry="30"/>
+        <ellipse class="scene-plat-glow" cx="550" cy="90" rx="120" ry="30"/>
+        <ellipse class="scene-plat-glow" cx="1350" cy="90" rx="120" ry="30"/>
+        <rect class="scene-pass-light" x="0" y="0" width="2400" height="200" fill="url(#scene-pass-light-grad)"/>
+      </svg>
+    </div>
+
+    <div class="scene-layer scene-train">
+      <div class="scene-train-blur"></div>
+      <div class="scene-train-wrap">
+        <svg viewBox="0 0 420 70" width="100%">
+          <!-- Car 1 (rear) -->
+          <rect class="scene-train-shell" x="0" y="16" width="122" height="32" rx="6"/>
+          <rect class="scene-train-shell-top" x="0" y="16" width="122" height="9" rx="4"/>
+          <rect class="scene-train-stripe" x="0" y="43" width="122" height="3.5"/>
+          <rect x="10" y="25" width="28" height="15" rx="2" class="scene-train-window dim"/>
+          <rect x="46" y="25" width="28" height="15" rx="2" class="scene-train-window"/>
+          <rect x="82" y="25" width="28" height="15" rx="2" class="scene-train-window"/>
+          <circle class="scene-train-tail" cx="6" cy="32" r="3.2"/>
+          <rect class="scene-train-coupler" x="121" y="28" width="6" height="8" rx="1.5"/>
+
+          <!-- Car 2 (middle) -->
+          <rect class="scene-train-shell" x="133" y="16" width="150" height="32" rx="6"/>
+          <rect class="scene-train-shell-top" x="133" y="16" width="150" height="9" rx="4"/>
+          <rect class="scene-train-stripe" x="133" y="43" width="150" height="3.5"/>
+          <rect x="144" y="25" width="28" height="15" rx="2" class="scene-train-window"/>
+          <rect x="180" y="25" width="28" height="15" rx="2" class="scene-train-window dim"/>
+          <rect x="216" y="25" width="28" height="15" rx="2" class="scene-train-window"/>
+          <rect x="252" y="25" width="28" height="15" rx="2" class="scene-train-window"/>
+          <rect class="scene-train-coupler" x="288" y="28" width="6" height="8" rx="1.5"/>
+
+          <!-- Car 3 (lead) — tapered cab nose -->
+          <path class="scene-train-shell" d="M 300 48 L 300 16 L 388 16 Q 412 16 416 32 Q 412 48 388 48 Z"/>
+          <path class="scene-train-shell-top" d="M 300 16 L 388 16 Q 405 16 412 24 L 300 24 Z"/>
+          <rect class="scene-train-stripe" x="300" y="43" width="116" height="3.5"/>
+          <rect x="310" y="25" width="26" height="15" rx="2" class="scene-train-window"/>
+          <rect x="346" y="25" width="26" height="15" rx="2" class="scene-train-window"/>
+          <circle class="scene-train-headlight" cx="407" cy="32" r="4"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="scene-layer scene-reflection">
+      <svg viewBox="0 0 2400 200" preserveAspectRatio="none">
+        <rect x="0" y="0" width="2400" height="200" fill="currentColor" style="color:var(--blue); opacity:.08;"/>
+      </svg>
+    </div>
+
+    <div class="scene-layer scene-ambient"></div>
+    <div class="scene-layer scene-overlay"></div>
+  </div>
+
+  <!-- ===================== AUTH ===================== -->
   <main id="auth-screen" class="auth-screen">
-    <section class="auth-visual">
-      <div class="rail-scene" aria-hidden="true">
-        <div class="city-grid"></div>
-        <div class="rail-line rail-blue"></div>
-        <div class="rail-line rail-green"></div>
-        <div class="metro-train">
-          <span></span><span></span><span></span>
-        </div>
-        <div class="platform-card one">Central</div>
-        <div class="platform-card two">Airport</div>
+    <section class="auth-visual" aria-hidden="true">
+      <div class="rail-canvas">
+        <svg class="line-map" viewBox="0 0 600 640" preserveAspectRatio="none">
+          <path class="line-path line-blue" d="M 80 560 C 80 420, 220 420, 220 300 S 360 140, 360 60" />
+          <path class="line-path line-orange" d="M 40 200 C 160 200, 220 240, 360 240 S 560 260, 560 340" />
+          <path class="line-path line-green" d="M 140 480 C 220 480, 260 520, 340 520 S 460 500, 500 440" />
+          <circle class="line-stop" cx="80" cy="560" r="6"/>
+          <circle class="line-stop" cx="220" cy="300" r="6"/>
+          <circle class="line-stop" cx="360" cy="60" r="6"/>
+          <circle class="line-stop" cx="40" cy="200" r="6"/>
+          <circle class="line-stop" cx="360" cy="240" r="6"/>
+          <circle class="line-stop" cx="560" cy="340" r="6"/>
+          <circle class="line-stop" cx="140" cy="480" r="6"/>
+          <circle class="line-stop" cx="340" cy="520" r="6"/>
+          <circle class="line-stop interchange" cx="360" cy="240" r="9"/>
+        </svg>
+        <div class="train-chip t1"><span></span><span></span><span></span></div>
+        <div class="train-chip t2"><span></span><span></span><span></span></div>
       </div>
       <div class="auth-copy">
-        <p class="kicker">Metro ticketing system</p>
-        <h1>Book, manage, and monitor metro journeys.</h1>
-        <p>Passenger booking and admin operations in one working Spring Boot demo.</p>
+        <p class="eyebrow">Metro ticketing</p>
+        <h1>Your city.<br>One tap to ride.</h1>
+        <p class="auth-lede">Plan a journey, buy a digital ticket, and get moving — passenger booking and network operations in one system.</p>
+        <div class="auth-stats">
+          <div><strong id="auth-stat-stations">—</strong><span>Stations live</span></div>
+          <div><strong id="auth-stat-lines">—</strong><span>Lines running</span></div>
+        </div>
       </div>
     </section>
 
     <section class="auth-panel">
-      <div class="brand-row">
-        <span class="brand-mark">M</span>
-        <strong>MetroPass</strong>
-      </div>
-      <div class="auth-tabs" role="tablist">
-        <button class="auth-tab active" type="button" data-auth-tab="signin">Sign in</button>
-        <button class="auth-tab" type="button" data-auth-tab="signup">Create account</button>
-      </div>
-
-      <form id="signin-form" class="auth-form active-auth-form">
-        <label>User ID<input id="signin-user" autocomplete="username" value="rider1" required></label>
-        <label>Password<input id="signin-password" type="password" autocomplete="current-password" value="rider123" required></label>
-        <button class="primary-action" type="submit">Sign in</button>
-        <p class="demo-hint">Try admin/admin123 or rider1/rider123.</p>
-      </form>
-
-      <form id="signup-form" class="auth-form">
-        <div class="two-fields">
-          <label>First name<input id="signup-first" required></label>
-          <label>Last name<input id="signup-last" required></label>
+      <button id="theme-toggle-auth" class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+        <span class="icon-sun">☀️</span>
+        <span class="icon-moon">🌙</span>
+      </button>
+      <div class="auth-panel-inner">
+        <div class="brand-row">
+          <span class="brand-mark">M</span>
+          <strong>MetroPass</strong>
         </div>
-        <label>User ID<input id="signup-user" autocomplete="username" required></label>
-        <label>Contact<input id="signup-contact" type="email" placeholder="name@example.com"></label>
-        <label>Account type<select id="signup-role"><option value="USER">Passenger</option><option value="ADMIN">Admin</option></select></label>
-        <label>Password<input id="signup-password" type="password" autocomplete="new-password" required></label>
-        <button id="signup-submit" class="primary-action" type="submit">Create passenger account</button>
-      </form>
+
+        <div class="auth-tabs" role="tablist">
+          <button class="auth-tab active" type="button" data-auth-tab="signin" role="tab" aria-selected="true">Sign in</button>
+          <button class="auth-tab" type="button" data-auth-tab="signup" role="tab" aria-selected="false">Create account</button>
+        </div>
+
+        <form id="signin-form" class="auth-form active-auth-form" novalidate>
+          <h2 class="auth-form-title">Welcome back</h2>
+          <label>User ID<input id="signin-user" autocomplete="username" value="rider1" required></label>
+          <label>Password<input id="signin-password" type="password" autocomplete="current-password" value="rider123" required></label>
+          <p id="signin-error" class="field-error" role="alert"></p>
+          <button class="primary-action full" type="submit">
+            <span>Sign in</span>
+          </button>
+          <p class="demo-hint">Demo accounts — <code>admin/admin123</code> or <code>rider1/rider123</code></p>
+        </form>
+
+        <form id="signup-form" class="auth-form" novalidate>
+          <h2 class="auth-form-title">Create your account</h2>
+          <div class="two-fields">
+            <label>First name<input id="signup-first" required></label>
+            <label>Last name<input id="signup-last" required></label>
+          </div>
+          <label>User ID<input id="signup-user" autocomplete="username" required></label>
+          <label>Contact<input id="signup-contact" type="email" placeholder="name@example.com"></label>
+          <label>Account type
+            <select id="signup-role">
+              <option value="USER">Passenger</option>
+              <option value="ADMIN">Admin / operator</option>
+            </select>
+          </label>
+          <label>Password<input id="signup-password" type="password" autocomplete="new-password" required></label>
+          <p id="signup-error" class="field-error" role="alert"></p>
+          <button id="signup-submit" class="primary-action full" type="submit">
+            <span>Create passenger account</span>
+          </button>
+        </form>
+      </div>
     </section>
   </main>
 
+  <!-- ===================== APP SHELL ===================== -->
   <div id="app-shell" class="app-shell hidden">
-    <aside class="sidebar">
-      <a class="brand-row" href="#dashboard" aria-label="MetroPass home">
-        <span class="brand-mark">M</span>
-        <strong>MetroPass</strong>
-      </a>
-      <nav id="nav-list" class="nav-list" aria-label="Workspace navigation"></nav>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <a class="brand-row" href="#dashboard" aria-label="MetroPass home">
+          <span class="brand-mark">M</span>
+          <strong>MetroPass</strong>
+        </a>
+        <button id="sidebar-close" class="icon-button mobile-only" type="button" aria-label="Close menu">✕</button>
+      </div>
+      <nav id="nav-list" class="nav-list" aria-label="Primary navigation"></nav>
       <section class="account-box">
-        <span id="account-role" class="pill"></span>
+        <div class="account-id-row">
+          <span id="account-role" class="pill"></span>
+          <button id="theme-toggle-sidebar" class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+            <span class="icon-sun">☀️</span>
+            <span class="icon-moon">🌙</span>
+          </button>
+        </div>
         <strong id="account-name"></strong>
         <small id="account-id"></small>
         <button id="signout-button" class="ghost-action" type="button">Sign out</button>
       </section>
     </aside>
 
+    <div id="sidebar-scrim" class="sidebar-scrim"></div>
+
     <main class="workspace">
       <header class="topbar">
-        <div>
-          <p id="today-label" class="kicker"></p>
+        <button id="menu-button" class="icon-button mobile-only" type="button" aria-label="Open menu">☰</button>
+        <div class="topbar-titles">
+          <p id="today-label" class="eyebrow"></p>
           <h2 id="view-title">Dashboard</h2>
         </div>
-        <button id="quick-book-button" class="primary-action compact" type="button">New ticket</button>
+        <button id="quick-book-button" class="primary-action compact" type="button">
+          <span id="quick-book-label">Book a ticket</span>
+        </button>
       </header>
 
       <div id="toast" class="toast" role="status"></div>
 
+      <!-- ============ HOME / DASHBOARD ============ -->
       <section id="view-dashboard" class="view active-view">
-        <div class="hero-band">
-          <div>
-            <p class="kicker">Live city network</p>
-            <h1 id="hero-title">Ready for your next ride?</h1>
-            <p id="hero-copy">Plan a trip, buy a ticket, and keep your travel history close.</p>
-          </div>
-          <div class="mini-map" aria-hidden="true">
-            <span class="node n1"></span><span class="node n2"></span><span class="node n3"></span><span class="node n4"></span>
-            <div class="map-track a"></div><div class="map-track b"></div>
-          </div>
-        </div>
 
-        <div id="stats-grid" class="stats-grid"></div>
+        <!-- Passenger hero: journey planner -->
+        <section id="journey-card" class="journey-card">
+          <div class="journey-card-head">
+            <p class="eyebrow">Plan your journey</p>
+            <h1>Where are you going?</h1>
+          </div>
+          <form id="journey-form" class="journey-form">
+            <div class="journey-stations">
+              <label class="journey-field">
+                <span>From</span>
+                <select id="journey-from" required></select>
+              </label>
+              <button type="button" id="journey-swap" class="swap-button" aria-label="Swap stations" title="Swap stations">⇄</button>
+              <label class="journey-field">
+                <span>To</span>
+                <select id="journey-to" required></select>
+              </label>
+            </div>
+            <div class="journey-options">
+              <label class="journey-field narrow">
+                <span>Passengers</span>
+                <select id="journey-passengers">
+                  <option value="1">1 Adult</option>
+                  <option value="2">2 Adults</option>
+                  <option value="3">3 Adults</option>
+                  <option value="4">4 Adults</option>
+                </select>
+              </label>
+              <label class="journey-field narrow">
+                <span>Ticket type</span>
+                <select id="journey-type">
+                  <option value="SINGLE">Single ride</option>
+                  <option value="RETURN">Return</option>
+                  <option value="DAY_PASS">Day pass</option>
+                </select>
+              </label>
+            </div>
+            <div id="journey-summary" class="journey-summary" hidden>
+              <p class="eyebrow journey-summary-label">Your route</p>
+              <div class="journey-summary-route">
+                <strong id="journey-summary-from">—</strong>
+                <span class="route-arrow">→</span>
+                <strong id="journey-summary-to">—</strong>
+              </div>
+              <div class="journey-summary-stats">
+                <div><strong id="journey-summary-fare">₹0</strong><span>Estimated fare</span></div>
+                <div><strong id="journey-summary-time">—</strong><span>Journey time</span></div>
+                <div><strong id="journey-summary-stops">—</strong><span>Stations</span></div>
+              </div>
+            </div>
+            <button class="primary-action full large" type="submit" id="journey-submit" disabled>
+              <span>Select a journey</span>
+            </button>
+          </form>
+        </section>
+
+        <div id="stats-grid" class="stats-grid stagger"></div>
 
         <div class="split-grid">
           <section class="panel">
             <div class="panel-heading">
-              <div><p class="kicker">Journey planner</p><h3>Check fare</h3></div>
-              <span class="status-ok">Online</span>
+              <div><p class="eyebrow">Live network</p><h3>System status</h3></div>
+              <span class="status-ok" id="network-status-pill">All systems operational</span>
             </div>
-            <form id="fare-form" class="form-grid">
-              <label>From<select id="fare-from" required></select></label>
-              <label>To<select id="fare-to" required></select></label>
-              <button class="dark-action" type="submit">Calculate</button>
-            </form>
-            <div id="fare-result" class="result-box"></div>
+            <div id="network-status-list" class="line-status-list stagger"></div>
+            <p id="next-train-line" class="next-train-line"></p>
           </section>
 
           <section class="panel">
             <div class="panel-heading">
-              <div><p class="kicker">Recent activity</p><h3 id="activity-title">My tickets</h3></div>
-              <button class="text-action" type="button" data-go-view="tickets">Open</button>
+              <div><p class="eyebrow" id="activity-kicker">Recent</p><h3 id="activity-title">Recent journeys</h3></div>
+              <button class="text-action" type="button" data-go-view="tickets">View all</button>
             </div>
-            <div id="recent-list" class="activity-list"></div>
+            <div id="recent-list" class="activity-list stagger"></div>
           </section>
         </div>
       </section>
 
+      <!-- ============ BOOK TICKET (stepper) ============ -->
       <section id="view-book" class="view">
         <div class="page-heading">
-          <div><p class="kicker">Passenger desk</p><h2>Book a ticket</h2><p>Create a valid journey ticket and payment record.</p></div>
+          <div><p class="eyebrow">Booking</p><h2>Book a ticket</h2><p>A quick four-step journey to your digital ticket.</p></div>
         </div>
-        <section class="panel booking-panel">
-          <form id="booking-form" class="booking-grid">
-            <label id="booking-passenger-wrap">Passenger<select id="booking-passenger"></select></label>
-            <label>From<select id="booking-from" required></select></label>
-            <label>To<select id="booking-to" required></select></label>
-            <label>Ticket type<select id="booking-type"><option value="SINGLE">Single ride</option><option value="DAY_PASS">Day pass</option><option value="RETURN">Return</option></select></label>
-            <label>Payment amount<input id="booking-amount" type="number" min="0" step="0.01" placeholder="Auto fare" required></label>
-            <button class="primary-action" type="submit">Issue ticket</button>
-          </form>
-          <div class="ticket-preview">
-            <p class="kicker">Preview</p>
-            <h3 id="preview-route">Select a journey</h3>
-            <strong id="preview-fare">-</strong>
-            <small id="preview-note">Fare is filled automatically when configured.</small>
+
+        <div class="booking-layout">
+          <div class="booking-steps-rail" id="booking-steps-rail">
+            <div class="step-dot active" data-step="1"><span>1</span><small>Journey</small></div>
+            <div class="step-line"></div>
+            <div class="step-dot" data-step="2"><span>2</span><small>Passengers</small></div>
+            <div class="step-line"></div>
+            <div class="step-dot" data-step="3"><span>3</span><small>Fare</small></div>
+            <div class="step-line"></div>
+            <div class="step-dot" data-step="4"><span>4</span><small>Payment</small></div>
           </div>
-        </section>
+
+          <form id="booking-form" class="booking-card">
+
+            <div class="booking-step active-step" data-booking-step="1">
+              <h3>Choose your journey</h3>
+              <label id="booking-passenger-wrap" class="admin-only-field">Booking for<select id="booking-passenger"></select></label>
+              <div class="journey-stations">
+                <label class="journey-field"><span>From</span><select id="booking-from" required></select></label>
+                <button type="button" id="booking-swap" class="swap-button" aria-label="Swap stations">⇄</button>
+                <label class="journey-field"><span>To</span><select id="booking-to" required></select></label>
+              </div>
+              <p id="booking-step1-error" class="field-error" role="alert"></p>
+              <div class="step-actions">
+                <button type="button" class="primary-action" data-step-next="2">Continue</button>
+              </div>
+            </div>
+
+            <div class="booking-step" data-booking-step="2">
+              <h3>Passengers</h3>
+              <div class="route-recap" id="route-recap-2"></div>
+              <label class="journey-field narrow">
+                <span>Passenger count</span>
+                <select id="booking-passenger-count">
+                  <option value="1">Adult × 1</option>
+                  <option value="2">Adult × 2</option>
+                  <option value="3">Adult × 3</option>
+                  <option value="4">Adult × 4</option>
+                </select>
+              </label>
+              <label class="journey-field narrow">
+                <span>Ticket type</span>
+                <select id="booking-type">
+                  <option value="SINGLE">Single ride</option>
+                  <option value="RETURN">Return</option>
+                  <option value="DAY_PASS">Day pass</option>
+                </select>
+              </label>
+              <div class="step-actions">
+                <button type="button" class="ghost-action" data-step-prev="1">Back</button>
+                <button type="button" class="primary-action" data-step-next="3">Continue</button>
+              </div>
+            </div>
+
+            <div class="booking-step" data-booking-step="3">
+              <h3>Fare summary</h3>
+              <div class="route-recap" id="route-recap-3"></div>
+              <table class="fare-table">
+                <tbody id="fare-breakdown-rows"></tbody>
+                <tfoot>
+                  <tr><td>Total</td><td id="fare-total">₹0</td></tr>
+                </tfoot>
+              </table>
+              <input type="hidden" id="booking-amount">
+              <div class="step-actions">
+                <button type="button" class="ghost-action" data-step-prev="2">Back</button>
+                <button type="button" class="primary-action" data-step-next="4">Continue to payment</button>
+              </div>
+            </div>
+
+            <div class="booking-step" data-booking-step="4">
+              <h3>Payment</h3>
+              <div class="route-recap" id="route-recap-4"></div>
+              <div class="mock-payment">
+                <div class="mock-payment-row"><span>Amount payable</span><strong id="payment-amount">₹0</strong></div>
+                <p class="mock-payment-note">This is a demo checkout — confirming will simulate payment and generate your ticket immediately.</p>
+              </div>
+              <div class="step-actions">
+                <button type="button" class="ghost-action" data-step-prev="3">Back</button>
+                <button class="primary-action large" type="submit" id="booking-submit">
+                  <span>Pay &amp; generate ticket</span>
+                </button>
+              </div>
+            </div>
+
+          </form>
+        </div>
       </section>
 
+      <!-- ============ TICKET GENERATED (success) ============ -->
+      <section id="view-ticket-success" class="view">
+        <div class="ticket-success">
+          <div id="success-stage" class="success-stage">
+            <div class="success-badge">✓</div>
+            <h2>Payment successful</h2>
+            <p>Your journey is confirmed</p>
+            <div class="success-amount" id="success-amount">₹0</div>
+            <div class="success-route" id="success-route">—</div>
+            <p class="success-ready-label">Ticket ready</p>
+          </div>
+          <div id="ticket-reveal-stage" class="ticket-reveal-stage" hidden>
+            <div id="success-ticket-slot"></div>
+            <button class="ghost-action" type="button" data-go-view="tickets">Go to my tickets</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ MY TICKETS ============ -->
       <section id="view-tickets" class="view">
         <div class="page-heading">
-          <div><p class="kicker">Ticket ledger</p><h2 id="tickets-heading">Tickets</h2><p id="tickets-copy">Search, review, and manage issued tickets.</p></div>
+          <div><p class="eyebrow">Ticket wallet</p><h2 id="tickets-heading">Your journeys</h2><p id="tickets-copy">Your current and past metro journeys.</p></div>
         </div>
+
+        <div class="ticket-section">
+          <h3 class="ticket-section-title">Current journey</h3>
+          <div id="active-tickets-row" class="active-tickets-row stagger"></div>
+        </div>
+
+        <div class="ticket-section">
+          <div class="table-toolbar">
+            <h3 class="ticket-section-title no-margin">Recent journeys</h3>
+            <input id="ticket-search" class="search-input" placeholder="Search tickets, stations...">
+            <span id="ticket-count" class="count-label"></span>
+          </div>
+          <section class="panel table-panel">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Ticket</th><th>Route</th><th>Date</th><th>Fare</th><th>Status</th><th class="admin-only"></th></tr></thead>
+                <tbody id="tickets-table"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ============ NETWORK ============ -->
+      <section id="view-network" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Metro network</p><h2>Explore the network</h2><p>Browse every line, check station details, and plan around live status.</p></div>
+        </div>
+        <div class="network-grid">
+          <section class="panel map-panel">
+            <div class="panel-heading"><div><p class="eyebrow">Diagram</p><h3>Line map</h3></div></div>
+            <div id="network-map" class="network-map"></div>
+            <div class="panel-heading" style="margin-top:16px;"><div><p class="eyebrow">Route preview</p><h3>Selected journey</h3></div></div>
+            <div id="network-selection-summary" class="network-selection-summary"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">Directory</p><h3>Stations</h3></div><span id="station-count" class="count-label"></span></div>
+            <div id="station-list" class="stack-list stagger"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- Station info slide-over -->
+      <div id="station-panel-scrim" class="station-panel-scrim"></div>
+      <aside id="station-panel" class="station-panel">
+        <div id="station-panel-body"></div>
+      </aside>
+
+      <!-- ============ METRO CARD (passenger) ============ -->
+      <section id="view-card" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Wallet</p><h2>Metro card</h2><p>Your stored balance for faster boarding.</p></div>
+        </div>
+        <div id="metrocard-slot" class="metrocard-slot"></div>
+      </section>
+
+      <!-- ============ PROFILE (passenger) ============ -->
+      <section id="view-profile" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Account</p><h2>Profile</h2><p>Your registered passenger details.</p></div>
+        </div>
+        <section class="panel profile-panel" id="profile-panel"></section>
+      </section>
+
+      <!-- ============ ADMIN: DASHBOARD ============ -->
+      <section id="view-admin-dashboard" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Overview</p><h2>Admin dashboard</h2><p>System-wide statistics and network health.</p></div>
+        </div>
+        <div id="admin-stats-grid" class="stats-grid admin-stats stagger"></div>
+        <div class="split-grid">
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">Network</p><h3>Line status</h3></div></div>
+            <div id="admin-line-status" class="line-status-list stagger"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">Activity</p><h3>Latest tickets</h3></div><button class="text-action" type="button" data-go-view="admin-tickets">View all</button></div>
+            <div id="admin-recent-list" class="activity-list stagger"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ============ ADMIN: STATIONS ============ -->
+      <section id="view-admin-stations" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Network</p><h2>Stations</h2><p>Manage station records and line assignment.</p></div>
+        </div>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Add station</summary>
+            <form id="station-form" class="form-grid">
+              <label>Station ID<input id="station-id" placeholder="ST-NEW" required></label>
+              <label>Name<input id="station-code" placeholder="Central" required></label>
+              <label>Address<input id="station-address" placeholder="Area or terminal"></label>
+              <label>Line color<input id="station-color" type="color" value="#2563eb"></label>
+              <button class="dark-action" type="submit">Save station</button>
+            </form>
+          </details>
+        </section>
         <section class="panel table-panel">
           <div class="table-toolbar">
-            <input id="ticket-search" class="search-input" placeholder="Search tickets, riders, stations">
-            <span id="ticket-count" class="count-label"></span>
+            <input id="admin-station-search" class="search-input" placeholder="Search stations...">
+            <span id="admin-station-count" class="count-label"></span>
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Ticket</th><th>Passenger</th><th>Journey</th><th>Issued</th><th>Status</th><th class="admin-only"></th></tr></thead>
-              <tbody id="tickets-table"></tbody>
+              <thead><tr><th>Station</th><th>Address</th><th>Line</th><th>Status</th><th></th></tr></thead>
+              <tbody id="admin-stations-table"></tbody>
             </table>
           </div>
         </section>
       </section>
 
-      <section id="view-network" class="view">
+      <!-- ============ ADMIN: ROUTES ============ -->
+      <section id="view-admin-routes" class="view">
         <div class="page-heading">
-          <div><p class="kicker">Metro network</p><h2>Stations and lines</h2><p>Browse stations, active routes, and configured fares.</p></div>
+          <div><p class="eyebrow">Network</p><h2>Routes</h2><p>Metro lines connecting the network.</p></div>
         </div>
-        <div class="network-grid">
-          <section class="panel map-panel"><div id="network-map" class="network-map"></div></section>
-          <section class="panel"><div class="panel-heading"><div><p class="kicker">Stations</p><h3>Directory</h3></div><span id="station-count" class="count-label"></span></div><div id="station-list" class="stack-list"></div></section>
-        </div>
+        <section class="panel table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Route</th><th>From → To</th><th>Distance</th><th>Time</th></tr></thead>
+              <tbody id="admin-routes-table"></tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
-      <section id="view-admin" class="view">
+      <!-- ============ ADMIN: TRAINS ============ -->
+      <section id="view-admin-trains" class="view">
         <div class="page-heading">
-          <div><p class="kicker">Admin controls</p><h2>Operations setup</h2><p>Add stations, fares, and passenger/admin accounts.</p></div>
+          <div><p class="eyebrow">Network</p><h2>Trains</h2><p>Fleet roster and rolling stock.</p></div>
         </div>
-        <div class="admin-grid">
-          <section class="panel">
-            <div class="panel-heading"><div><p class="kicker">Station</p><h3>Add station</h3></div></div>
-            <form id="station-form" class="form-grid">
-              <label>Station ID<input id="station-id" placeholder="ST-NEW" required></label>
-              <label>Name/code<input id="station-code" placeholder="Central" required></label>
-              <label>Address<input id="station-address" placeholder="Area or terminal"></label>
-              <label>Line color<input id="station-color" type="color" value="#2f80ed"></label>
-              <button class="dark-action" type="submit">Save station</button>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Add train</summary>
+            <form id="train-form" class="form-grid">
+              <label>Train ID<input id="train-id" placeholder="TR-104" required></label>
+              <label>Train number<input id="train-number" placeholder="104" required></label>
+              <label>Capacity<input id="train-capacity" type="number" min="0" required></label>
+              <label>Coaches<input id="train-coaches" type="number" min="1" required></label>
+              <label>Manufacture year<input id="train-year" type="number" min="1990" max="2100" required></label>
+              <button class="dark-action" type="submit">Save train</button>
             </form>
-          </section>
-          <section class="panel">
-            <div class="panel-heading"><div><p class="kicker">Fare</p><h3>Add fare</h3></div></div>
+          </details>
+        </section>
+        <section class="panel table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Train</th><th>Capacity</th><th>Coaches</th><th>Year</th><th>Status</th></tr></thead>
+              <tbody id="trains-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ============ ADMIN: SCHEDULES ============ -->
+      <section id="view-admin-schedules" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Network</p><h2>Schedules</h2><p>Timetables linking trains to routes.</p></div>
+        </div>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Add schedule</summary>
+            <form id="schedule-form" class="form-grid">
+              <label>Schedule ID<input id="schedule-id" placeholder="SCH-04" required></label>
+              <label>Train<select id="schedule-train" required></select></label>
+              <label>Route<select id="schedule-route" required></select></label>
+              <label>Day of week<select id="schedule-day">
+                <option>MONDAY</option><option>TUESDAY</option><option>WEDNESDAY</option>
+                <option>THURSDAY</option><option>FRIDAY</option><option>SATURDAY</option><option>SUNDAY</option>
+              </select></label>
+              <label>Departure<input id="schedule-departure" type="datetime-local" required></label>
+              <label>Arrival<input id="schedule-arrival" type="datetime-local" required></label>
+              <button class="dark-action" type="submit">Save schedule</button>
+            </form>
+          </details>
+        </section>
+        <section class="panel table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Schedule</th><th>Train</th><th>Route</th><th>Day</th><th>Departure</th></tr></thead>
+              <tbody id="schedules-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ============ ADMIN: TICKETS ============ -->
+      <section id="view-admin-tickets" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Ticketing</p><h2>Tickets</h2><p>All issued tickets across the network.</p></div>
+        </div>
+        <section class="panel table-panel">
+          <div class="table-toolbar">
+            <input id="admin-ticket-search" class="search-input" placeholder="Search tickets, riders, stations">
+            <span id="admin-ticket-count" class="count-label"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Ticket</th><th>Passenger</th><th>Journey</th><th>Issued</th><th>Status</th><th></th></tr></thead>
+              <tbody id="admin-tickets-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ============ ADMIN: PAYMENTS ============ -->
+      <section id="view-admin-payments" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Ticketing</p><h2>Payments</h2><p>Revenue transactions linked to tickets.</p></div>
+        </div>
+        <section class="panel table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Payment</th><th>Ticket</th><th>Amount</th><th>Date</th></tr></thead>
+              <tbody id="payments-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ============ ADMIN: FARES ============ -->
+      <section id="view-admin-fares" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Ticketing</p><h2>Fares</h2><p>Base fares between station pairs.</p></div>
+        </div>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Add fare</summary>
             <form id="fare-admin-form" class="form-grid">
               <label>Fare ID<input id="fare-id" placeholder="FR-NEW" required></label>
               <label>From<select id="admin-fare-from" required></select></label>
@@ -199,9 +729,52 @@
               <label>Base fare<input id="admin-fare-amount" type="number" min="0" step="0.01" required></label>
               <button class="dark-action" type="submit">Save fare</button>
             </form>
-          </section>
-          <section class="panel">
-            <div class="panel-heading"><div><p class="kicker">Account</p><h3>Add user</h3></div></div>
+          </details>
+        </section>
+        <section class="panel table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fare</th><th>From → To</th><th>Amount</th></tr></thead>
+              <tbody id="fares-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ============ ADMIN: METRO CARDS ============ -->
+      <section id="view-admin-cards" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Ticketing</p><h2>Metro cards</h2><p>Stored-value cards issued to passengers.</p></div>
+        </div>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Issue card</summary>
+            <form id="metrocard-form" class="form-grid">
+              <label>Card ID<input id="metrocard-id" placeholder="MC-1003" required></label>
+              <label>Passenger<select id="metrocard-passenger" required></select></label>
+              <label>Opening balance<input id="metrocard-balance" type="number" min="0" step="0.01" required></label>
+              <button class="dark-action" type="submit">Issue card</button>
+            </form>
+          </details>
+        </section>
+        <section class="panel table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Card</th><th>Passenger</th><th>Balance</th><th>Expiry</th><th>Status</th></tr></thead>
+              <tbody id="metrocards-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ============ ADMIN: USERS ============ -->
+      <section id="view-admin-users" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Management</p><h2>Users</h2><p>Registered passengers and staff accounts.</p></div>
+        </div>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Add user</summary>
             <form id="admin-user-form" class="form-grid">
               <label>User ID<input id="admin-user-id" required></label>
               <label>Name<input id="admin-user-name" placeholder="First Last" required></label>
@@ -210,14 +783,8 @@
               <label>Password<input id="admin-user-password" type="password" value="password123" required></label>
               <button class="dark-action" type="submit">Save user</button>
             </form>
-          </section>
-        </div>
-      </section>
-
-      <section id="view-users" class="view">
-        <div class="page-heading">
-          <div><p class="kicker">People</p><h2>Users</h2><p>Registered passengers and staff accounts.</p></div>
-        </div>
+          </details>
+        </section>
         <section class="panel table-panel">
           <div class="table-toolbar">
             <input id="user-search" class="search-input" placeholder="Search users">
@@ -232,52 +799,14 @@
         </section>
       </section>
 
-      <section id="view-operations" class="view">
+      <!-- ============ ADMIN: MAINTENANCE ============ -->
+      <section id="view-admin-maintenance" class="view">
         <div class="page-heading">
-          <div><p class="kicker">Fleet and operations</p><h2>Operations</h2><p>Trains, schedules, metro cards, and maintenance issues.</p></div>
+          <div><p class="eyebrow">Management</p><h2>Maintenance issues</h2><p>Reported faults across trains and stations.</p></div>
         </div>
-
-        <div class="admin-grid">
-          <section class="panel">
-            <div class="panel-heading"><div><p class="kicker">Fleet</p><h3>Add train</h3></div></div>
-            <form id="train-form" class="form-grid">
-              <label>Train ID<input id="train-id" placeholder="TR-104" required></label>
-              <label>Train number<input id="train-number" placeholder="104" required></label>
-              <label>Capacity<input id="train-capacity" type="number" min="0" required></label>
-              <label>Coaches<input id="train-coaches" type="number" min="1" required></label>
-              <label>Manufacture year<input id="train-year" type="number" min="1990" max="2100" required></label>
-              <button class="dark-action" type="submit">Save train</button>
-            </form>
-          </section>
-
-          <section class="panel">
-            <div class="panel-heading"><div><p class="kicker">Timetable</p><h3>Add schedule</h3></div></div>
-            <form id="schedule-form" class="form-grid">
-              <label>Schedule ID<input id="schedule-id" placeholder="SCH-04" required></label>
-              <label>Train<select id="schedule-train" required></select></label>
-              <label>Route<select id="schedule-route" required></select></label>
-              <label>Day of week<select id="schedule-day">
-                <option>MONDAY</option><option>TUESDAY</option><option>WEDNESDAY</option>
-                <option>THURSDAY</option><option>FRIDAY</option><option>SATURDAY</option><option>SUNDAY</option>
-              </select></label>
-              <label>Departure<input id="schedule-departure" type="datetime-local" required></label>
-              <label>Arrival<input id="schedule-arrival" type="datetime-local" required></label>
-              <button class="dark-action" type="submit">Save schedule</button>
-            </form>
-          </section>
-
-          <section class="panel">
-            <div class="panel-heading"><div><p class="kicker">Metro card</p><h3>Issue card</h3></div></div>
-            <form id="metrocard-form" class="form-grid">
-              <label>Card ID<input id="metrocard-id" placeholder="MC-1003" required></label>
-              <label>Passenger<select id="metrocard-passenger" required></select></label>
-              <label>Opening balance<input id="metrocard-balance" type="number" min="0" step="0.01" required></label>
-              <button class="dark-action" type="submit">Issue card</button>
-            </form>
-          </section>
-
-          <section class="panel">
-            <div class="panel-heading"><div><p class="kicker">Maintenance</p><h3>Report issue</h3></div></div>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Report issue</summary>
             <form id="maintenance-form" class="form-grid">
               <label>Issue ID<input id="maintenance-id" placeholder="MI-02" required></label>
               <label>Train<select id="maintenance-train"></select></label>
@@ -287,53 +816,18 @@
               <label>Description<input id="maintenance-description" placeholder="Details"></label>
               <button class="dark-action" type="submit">Log issue</button>
             </form>
-          </section>
-        </div>
-
-        <div class="split-grid">
-          <section class="panel table-panel">
-            <div class="panel-heading"><div><p class="kicker">Fleet</p><h3>Trains</h3></div><span id="train-count" class="count-label"></span></div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Train</th><th>Capacity</th><th>Coaches</th><th>Year</th><th>Status</th></tr></thead>
-                <tbody id="trains-table"></tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="panel table-panel">
-            <div class="panel-heading"><div><p class="kicker">Timetable</p><h3>Schedules</h3></div><span id="schedule-count" class="count-label"></span></div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Schedule</th><th>Train</th><th>Route</th><th>Day</th><th>Departure</th></tr></thead>
-                <tbody id="schedules-table"></tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-
-        <div class="split-grid">
-          <section class="panel table-panel">
-            <div class="panel-heading"><div><p class="kicker">Cards</p><h3>Metro cards</h3></div><span id="metrocard-count" class="count-label"></span></div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Card</th><th>Passenger</th><th>Balance</th><th>Expiry</th><th>Status</th></tr></thead>
-                <tbody id="metrocards-table"></tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="panel table-panel">
-            <div class="panel-heading"><div><p class="kicker">Maintenance</p><h3>Issues</h3></div><span id="maintenance-count" class="count-label"></span></div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Issue</th><th>Train/Station</th><th>Type</th><th>Priority</th><th>Status</th></tr></thead>
-                <tbody id="maintenance-table"></tbody>
-              </table>
-            </div>
-          </section>
-        </div>
+          </details>
+        </section>
+        <section class="panel table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Issue</th><th>Train / Station</th><th>Type</th><th>Priority</th><th>Status</th></tr></thead>
+              <tbody id="maintenance-table"></tbody>
+            </table>
+          </div>
+        </section>
       </section>
+
     </main>
   </div>
 
