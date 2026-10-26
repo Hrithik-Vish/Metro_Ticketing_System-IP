@@ -200,26 +200,22 @@ function calculateBookingFare(from, to, type = 'SINGLE', count = 1) {
   const path = pathBetween(from, to);
   if (!path) return null;
   const normalizedType = String(type || 'SINGLE').toUpperCase();
-  const fareInfo = normalizedType === 'DAY_PASS' ? null : fareForJourney(from, to, path);
-  if (normalizedType !== 'DAY_PASS' && !fareInfo) return null;
+  const fareInfo = fareForJourney(from, to, path);
+  if (!fareInfo) return null;
   let perPassenger;
   let label;
-  let fareId = fareInfo?.fareId || null;
+  const fareId = fareInfo.fareId;
   if (normalizedType === 'RETURN') {
     perPassenger = fareInfo.oneWayFare * 2;
-    label = 'Return journey';
+    label = 'Return journey (2× one-way fare)';
   } else if (normalizedType === 'DAY_PASS') {
-    const configuredFares = state.fares
-      .filter((fare) => Number.isFinite(Number(fare.baseFare)) && Number(fare.baseFare) > 0)
-      .sort((a, b) => Number(b.baseFare) - Number(a.baseFare));
-    if (!configuredFares.length) return null;
-    // Demo policy: a network-wide day pass costs the highest configured one-way fare.
-    perPassenger = Number(configuredFares[0].baseFare);
-    fareId = configuredFares[0].fareId;
-    label = 'Network day pass';
-  } else {
+    perPassenger = fareInfo.oneWayFare * 3;
+    label = 'Day pass (3× one-way fare)';
+  } else if (normalizedType === 'SINGLE') {
     perPassenger = fareInfo.oneWayFare;
     label = 'Single journey';
+  } else {
+    return null;
   }
   const passengerCount = Number(count || 1);
   if (!Number.isInteger(passengerCount) || passengerCount < 1 || passengerCount > 4) return null;

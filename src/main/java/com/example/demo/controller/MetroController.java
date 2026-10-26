@@ -144,36 +144,29 @@ public class MetroController {
             throw badRequest("No connected metro route exists between these stations.");
         }
 
-        Fare fareReference = null;
-        BigDecimal unitFare;
-        if ("DAY_PASS".equals(ticketType)) {
-            Fare passFare = fares.findAll().stream()
-                    .filter(fare -> fare.baseFare != null && fare.baseFare.compareTo(BigDecimal.ZERO) > 0)
-                    .max(Comparator.comparing((Fare fare) -> fare.baseFare))
-                    .orElseThrow(() -> badRequest("No valid fares are configured for a day pass."));
-            // Demo policy: a network-wide day pass costs the highest configured one-way fare.
-            unitFare = passFare.baseFare;
-            fareReference = passFare;
+        Fare directFare = findFare(source.stationId, destination.stationId);
+        Fare fareReference = directFare != null && directFare.baseFare != null
+                && directFare.baseFare.compareTo(BigDecimal.ZERO) > 0 ? directFare : null;
+        BigDecimal oneWayFare;
+        if (fareReference != null) {
+            oneWayFare = fareReference.baseFare;
         } else {
-            Fare directFare = findFare(source.stationId, destination.stationId);
-            BigDecimal oneWayFare;
-            fareReference = directFare != null && directFare.baseFare != null
-                    && directFare.baseFare.compareTo(BigDecimal.ZERO) > 0 ? directFare : null;
-            if (fareReference != null) {
-                oneWayFare = fareReference.baseFare;
-            } else {
-                oneWayFare = BigDecimal.ZERO;
-                for (PathEdge edge : path) {
-                    Fare edgeFare = findFare(edge.fromStationId(), edge.toStationId());
-                    if (edgeFare == null || edgeFare.baseFare == null || edgeFare.baseFare.compareTo(BigDecimal.ZERO) <= 0) {
-                        throw badRequest("A fare is missing for part of this journey. Please contact the metro administrator.");
-                    }
-                    oneWayFare = oneWayFare.add(edgeFare.baseFare);
-                    if (fareReference == null) fareReference = edgeFare;
+            oneWayFare = BigDecimal.ZERO;
+            for (PathEdge edge : path) {
+                Fare edgeFare = findFare(edge.fromStationId(), edge.toStationId());
+                if (edgeFare == null || edgeFare.baseFare == null || edgeFare.baseFare.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw badRequest("A fare is missing for part of this journey. Please contact the metro administrator.");
                 }
+                oneWayFare = oneWayFare.add(edgeFare.baseFare);
+                if (fareReference == null) fareReference = edgeFare;
             }
-            unitFare = "RETURN".equals(ticketType) ? oneWayFare.multiply(BigDecimal.valueOf(2)) : oneWayFare;
         }
+        BigDecimal multiplier = switch (ticketType) {
+            case "RETURN" -> BigDecimal.valueOf(2);
+            case "DAY_PASS" -> BigDecimal.valueOf(3);
+            default -> BigDecimal.ONE;
+        };
+        BigDecimal unitFare = oneWayFare.multiply(multiplier);
         BigDecimal total = unitFare.multiply(BigDecimal.valueOf(passengerCount)).setScale(2, java.math.RoundingMode.HALF_UP);
         LocalDateTime now = LocalDateTime.now();
 
