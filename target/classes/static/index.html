@@ -217,7 +217,7 @@
           <button class="auth-tab" type="button" data-auth-tab="signup" role="tab" aria-selected="false">Create account</button>
         </div>
 
-        <form id="signin-form" class="auth-form active-auth-form" novalidate>
+        <form id="signin-form" class="auth-form active-auth-form">
           <h2 class="auth-form-title">Welcome back</h2>
           <label>User ID<input id="signin-user" autocomplete="username" value="rider1" required></label>
           <label>Password<input id="signin-password" type="password" autocomplete="current-password" value="rider123" required></label>
@@ -228,21 +228,21 @@
           <p class="demo-hint">Demo accounts — <code>admin/admin123</code> or <code>rider1/rider123</code></p>
         </form>
 
-        <form id="signup-form" class="auth-form" novalidate>
+        <form id="signup-form" class="auth-form">
           <h2 class="auth-form-title">Create your account</h2>
           <div class="two-fields">
             <label>First name<input id="signup-first" required></label>
             <label>Last name<input id="signup-last" required></label>
           </div>
-          <label>User ID<input id="signup-user" autocomplete="username" required></label>
-          <label>Contact<input id="signup-contact" type="email" placeholder="name@example.com"></label>
+          <label>User ID<input id="signup-user" autocomplete="username" minlength="3" required></label>
+          <label>Contact<input id="signup-contact" type="email" placeholder="name@example.com" required></label>
           <label>Account type
             <select id="signup-role">
               <option value="USER">Passenger</option>
               <option value="ADMIN">Admin / operator</option>
             </select>
           </label>
-          <label>Password<input id="signup-password" type="password" autocomplete="new-password" required></label>
+          <label>Password<input id="signup-password" type="password" autocomplete="new-password" minlength="6" required></label>
           <p id="signup-error" class="field-error" role="alert"></p>
           <button id="signup-submit" class="primary-action full" type="submit">
             <span>Create passenger account</span>
@@ -608,13 +608,48 @@
       <!-- ============ ADMIN: ROUTES ============ -->
       <section id="view-admin-routes" class="view">
         <div class="page-heading">
-          <div><p class="eyebrow">Network</p><h2>Routes</h2><p>Metro lines connecting the network.</p></div>
+          <div><p class="eyebrow">Network</p><h2>Routes</h2><p>Manage lines, their endpoints, and ordered station mappings.</p></div>
         </div>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Add route</summary>
+            <form id="route-form" class="form-grid">
+              <label>Route ID<input id="route-id" placeholder="RT-NEW" required></label>
+              <label>Route name<input id="route-name" placeholder="Purple Line" required></label>
+              <label>Start station<select id="route-start" required></select></label>
+              <label>End station<select id="route-end" required></select></label>
+              <label>Total distance (km)<input id="route-distance" type="number" min="0.1" step="0.1" required></label>
+              <label>Estimated time (minutes)<input id="route-time" type="number" min="1" step="1" required></label>
+              <label>Line colour<input id="route-color" type="color" value="#7c3aed"></label>
+              <button class="dark-action" type="submit">Save route</button>
+            </form>
+          </details>
+        </section>
         <section class="panel table-panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Route</th><th>From → To</th><th>Distance</th><th>Time</th></tr></thead>
+              <thead><tr><th>Route</th><th>From → To</th><th>Distance</th><th>Time</th><th>Actions</th></tr></thead>
               <tbody id="admin-routes-table"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
+          <details class="admin-form-details">
+            <summary>+ Add station to a route</summary>
+            <form id="route-station-form" class="form-grid">
+              <label>Route<select id="route-station-route" required></select></label>
+              <label>Station<select id="route-station-station" required></select></label>
+              <label>Insert before sequence<input id="route-station-sequence" type="number" min="2" step="1" value="2" required></label>
+              <button class="dark-action" type="submit">Add stop</button>
+            </form>
+          </details>
+        </section>
+        <section class="panel table-panel">
+          <div class="panel-heading"><div><p class="eyebrow">Route definition</p><h3>Station order</h3></div></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Route</th><th>Station</th><th>Sequence</th><th>Actions</th></tr></thead>
+              <tbody id="route-stations-table"></tbody>
             </table>
           </div>
         </section>
@@ -631,7 +666,7 @@
             <form id="train-form" class="form-grid">
               <label>Train ID<input id="train-id" placeholder="TR-104" required></label>
               <label>Train number<input id="train-number" placeholder="104" required></label>
-              <label>Capacity<input id="train-capacity" type="number" min="0" required></label>
+              <label>Capacity<input id="train-capacity" type="number" min="1" step="1" required></label>
               <label>Coaches<input id="train-coaches" type="number" min="1" required></label>
               <label>Manufacture year<input id="train-year" type="number" min="1990" max="2100" required></label>
               <button class="dark-action" type="submit">Save train</button>
@@ -641,7 +676,7 @@
         <section class="panel table-panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Train</th><th>Capacity</th><th>Coaches</th><th>Year</th><th>Status</th></tr></thead>
+              <thead><tr><th>Train</th><th>Capacity</th><th>Coaches</th><th>Year</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody id="trains-table"></tbody>
             </table>
           </div>
@@ -666,6 +701,7 @@
               </select></label>
               <label>Departure<input id="schedule-departure" type="datetime-local" required></label>
               <label>Arrival<input id="schedule-arrival" type="datetime-local" required></label>
+              <label>Valid through<input id="schedule-valid-to" type="date"></label>
               <button class="dark-action" type="submit">Save schedule</button>
             </form>
           </details>
@@ -673,7 +709,7 @@
         <section class="panel table-panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Schedule</th><th>Train</th><th>Route</th><th>Day</th><th>Departure</th></tr></thead>
+              <thead><tr><th>Schedule</th><th>Train</th><th>Route</th><th>Day</th><th>Departure</th><th>Actions</th></tr></thead>
               <tbody id="schedules-table"></tbody>
             </table>
           </div>
@@ -726,7 +762,7 @@
               <label>Fare ID<input id="fare-id" placeholder="FR-NEW" required></label>
               <label>From<select id="admin-fare-from" required></select></label>
               <label>To<select id="admin-fare-to" required></select></label>
-              <label>Base fare<input id="admin-fare-amount" type="number" min="0" step="0.01" required></label>
+              <label>Base fare<input id="admin-fare-amount" type="number" min="0.01" step="0.01" required></label>
               <button class="dark-action" type="submit">Save fare</button>
             </form>
           </details>
@@ -734,7 +770,7 @@
         <section class="panel table-panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Fare</th><th>From → To</th><th>Amount</th></tr></thead>
+              <thead><tr><th>Fare</th><th>From → To</th><th>Amount</th><th>Actions</th></tr></thead>
               <tbody id="fares-table"></tbody>
             </table>
           </div>
@@ -760,7 +796,7 @@
         <section class="panel table-panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Card</th><th>Passenger</th><th>Balance</th><th>Expiry</th><th>Status</th></tr></thead>
+              <thead><tr><th>Card</th><th>Passenger</th><th>Balance</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody id="metrocards-table"></tbody>
             </table>
           </div>
@@ -778,9 +814,9 @@
             <form id="admin-user-form" class="form-grid">
               <label>User ID<input id="admin-user-id" required></label>
               <label>Name<input id="admin-user-name" placeholder="First Last" required></label>
-              <label>Contact<input id="admin-user-contact"></label>
+              <label>Contact<input id="admin-user-contact" type="email" required></label>
               <label>Role<select id="admin-user-role"><option value="USER">Passenger</option><option value="ADMIN">Admin</option></select></label>
-              <label>Password<input id="admin-user-password" type="password" value="password123" required></label>
+              <label>Password<input id="admin-user-password" type="password" value="password123" minlength="6" required></label>
               <button class="dark-action" type="submit">Save user</button>
             </form>
           </details>
@@ -792,7 +828,7 @@
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>User</th><th>Contact</th><th>Role</th><th>Registered</th><th>Status</th></tr></thead>
+              <thead><tr><th>User</th><th>Contact</th><th>Role</th><th>Registered</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody id="users-table"></tbody>
             </table>
           </div>
@@ -813,7 +849,7 @@
               <label>Station<select id="maintenance-station"></select></label>
               <label>Issue type<input id="maintenance-type" placeholder="Brake check" required></label>
               <label>Priority<select id="maintenance-priority"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option></select></label>
-              <label>Description<input id="maintenance-description" placeholder="Details"></label>
+              <label>Description<input id="maintenance-description" placeholder="Details" required></label>
               <button class="dark-action" type="submit">Log issue</button>
             </form>
           </details>
@@ -821,7 +857,7 @@
         <section class="panel table-panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Issue</th><th>Train / Station</th><th>Type</th><th>Priority</th><th>Status</th></tr></thead>
+              <thead><tr><th>Issue</th><th>Train / Station</th><th>Type</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody id="maintenance-table"></tbody>
             </table>
           </div>

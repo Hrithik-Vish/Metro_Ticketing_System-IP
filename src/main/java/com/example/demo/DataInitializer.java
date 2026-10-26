@@ -28,6 +28,10 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.DayOfWeek;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class DataInitializer implements CommandLineRunner {
@@ -62,12 +66,18 @@ public class DataInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        boolean freshDatabase = users.count() == 0 && stations.count() == 0 && routes.count() == 0
+                && fares.count() == 0 && tickets.count() == 0 && payments.count() == 0
+                && trains.count() == 0 && schedules.count() == 0 && metroCards.count() == 0
+                && routeStations.count() == 0 && maintenanceIssues.count() == 0;
         seedUsers();
         seedNetwork();
-        seedTickets();
         seedTrains();
         seedRouteStations();
+        ensureDemoGreenInterchange();
         seedSchedules();
+        ensureDemoWeeklySchedules();
+        if (freshDatabase) seedTickets();
         seedMetroCards();
         seedMaintenanceIssues();
     }
@@ -146,12 +156,63 @@ public class DataInitializer implements CommandLineRunner {
         routeStation("RT-GREEN", "ST-RIV", 2);
     }
 
+    private void ensureDemoGreenInterchange() {
+        Route green = routes.findById("RT-GREEN").orElse(null);
+        if (green == null || !"River Connector".equals(green.routeName)
+                || !stations.existsById("ST-CEN") || !stations.existsById("ST-MKT")
+                || !stations.existsById("ST-RIV")) return;
+        List<RouteStation> stops = routeStations.findByRouteIdOrderBySequenceNumberAsc("RT-GREEN");
+        if (stops.stream().anyMatch(stop -> "ST-CEN".equals(stop.stationId))) return;
+        boolean matchesSeedNetwork = stops.stream().anyMatch(stop -> "ST-MKT".equals(stop.stationId))
+                && stops.stream().anyMatch(stop -> "ST-RIV".equals(stop.stationId))
+                && stops.size() == 2;
+        if (!matchesSeedNetwork) return;
+        for (RouteStation stop : stops) {
+            if (stop.sequenceNumber != null && stop.sequenceNumber >= 2) stop.sequenceNumber++;
+        }
+        routeStations.saveAll(stops);
+        routeStation("RT-GREEN", "ST-CEN", 2);
+    }
+
     private void seedSchedules() {
         if (schedules.count() > 0) return;
-        LocalDateTime today = LocalDateTime.now().withHour(7).withMinute(0).withSecond(0).withNano(0);
-        schedule("SCH-01", "TR-101", "RT-BLUE", "MONDAY", today, today.plusMinutes(34));
-        schedule("SCH-02", "TR-102", "RT-ORANGE", "MONDAY", today.plusHours(1), today.plusHours(1).plusMinutes(28));
-        schedule("SCH-03", "TR-103", "RT-GREEN", "MONDAY", today.plusHours(2), today.plusHours(2).plusMinutes(16));
+        LocalDate today = LocalDate.now();
+        seedSchedule("SCH-01", "TR-101", "RT-BLUE", DayOfWeek.MONDAY, today, 7);
+        seedSchedule("SCH-02", "TR-102", "RT-ORANGE", DayOfWeek.MONDAY, today, 8);
+        seedSchedule("SCH-03", "TR-103", "RT-GREEN", DayOfWeek.MONDAY, today, 9);
+    }
+
+    /** Legacy demo databases contain one Monday run per route. Add the missing weekdays once,
+     *  but do not rewrite a database that already contains custom timetable entries. */
+    private void ensureDemoWeeklySchedules() {
+        List<Schedule> existing = schedules.findAll();
+        Set<String> knownIds = Set.of("SCH-01", "SCH-02", "SCH-03");
+        // Only migrate the exact original three-route demo timetable; do not recreate
+        // schedules on a database where an operator has deliberately removed seed rows.
+        if (existing.size() != 3 || existing.stream().anyMatch(s -> !knownIds.contains(s.scheduleId))) return;
+        LocalDate today = LocalDate.now();
+        for (DayOfWeek day : DayOfWeek.values()) {
+            ensureSchedule("RT-BLUE", "TR-101", day, today, 7);
+            ensureSchedule("RT-ORANGE", "TR-102", day, today, 8);
+            ensureSchedule("RT-GREEN", "TR-103", day, today, 9);
+        }
+    }
+
+    private void ensureSchedule(String routeId, String trainId, DayOfWeek day, LocalDate today, int hour) {
+        boolean exists = schedules.findAll().stream().anyMatch(s -> routeId.equals(s.routeId)
+                && day.name().equalsIgnoreCase(s.dayOfWeek));
+        if (exists) return;
+        String routeToken = routeId.replace("RT-", "");
+        String id = "SCH-" + routeToken + "-" + day.name();
+        if (schedules.existsById(id)) return;
+        seedSchedule(id, trainId, routeId, day, today, hour);
+    }
+
+    private void seedSchedule(String id, String trainId, String routeId, DayOfWeek day, LocalDate today, int hour) {
+        LocalDate departureDate = today.with(java.time.temporal.TemporalAdjusters.nextOrSame(day));
+        LocalDateTime departure = departureDate.atTime(hour, 0);
+        schedule(id, trainId, routeId, day.name(), departure, departure.plusMinutes(
+                routes.findById(routeId).map(route -> route.estimatedTime == null ? 20 : route.estimatedTime).orElse(20)));
     }
 
     private void seedMetroCards() {

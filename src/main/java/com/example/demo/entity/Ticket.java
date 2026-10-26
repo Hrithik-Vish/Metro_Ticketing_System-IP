@@ -14,6 +14,8 @@ public class Ticket {
     public String sourceStationId;
     public String destStationId;
     public String ticketType;
+    /** Number of passengers covered by this ticket; null only on rows created before this field existed. */
+    public Integer passengerCount = 1;
     public LocalDateTime validUntil;
     public boolean isUsed;
     public LocalDateTime issueTime;
