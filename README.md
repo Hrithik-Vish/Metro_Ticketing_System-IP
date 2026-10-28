@@ -169,7 +169,7 @@ Metro Ticketing System
 | `.dockerignore` | Lists files and directories that should not be sent into the Docker build context. |
 | `.mvn/wrapper/maven-wrapper.properties` | Maven Wrapper configuration. Pins the Maven distribution used by the project. |
 | `pom.xml` | Main Maven project definition. Declares Java/Spring Boot versions, dependencies, test dependencies, OpenAPI support, and the Spring Boot Maven plugin. |
-| `Dockerfile` | Builds the Spring Boot application into a Docker image using Eclipse Temurin JDK 25, runs the Maven build, exposes port 8080, and starts the generated JAR. |
+| `Dockerfile` | Builds the Spring Boot application into a Docker image using Eclipse Temurin JDK 21 (build stage) and a JRE 21 runtime image, runs the Maven build, exposes port 8080, and starts the generated JAR. |
 | `docker-compose.yml` | Defines the local two-container environment: PostgreSQL plus the Spring Boot app. Also configures the PostgreSQL volume and health check. |
 | `render.yaml` | Render deployment manifest. Defines the web service, Dockerfile path, free plan, and database-related environment variables. |
 | `README.md` | This document: project overview, architecture, setup, file descriptions, API reference, flows, database model, and limitations. |
@@ -781,8 +781,10 @@ DELETE /api/schedules/{id}
 
 ```text
 GET    /api/metro-cards
+GET    /api/metro-cards/{id}
 POST   /api/metro-cards
-PUT    /api/metro-cards/{id}
+PUT    /api/metro-cards/{id}      (full replace)
+PATCH  /api/metro-cards/{id}      (partial update)
 DELETE /api/metro-cards/{id}
 ```
 
@@ -1040,13 +1042,13 @@ The test suite is therefore mainly a startup/integration sanity check at present
 
 ### Backend
 
-- **Java 25**
+- **Java 21**
 - **Spring Boot 4.1.0**
 - Spring Web
 - Spring Data JPA
 - Hibernate
 - PostgreSQL
-- Springdoc OpenAPI 2.2.0
+- Springdoc OpenAPI 3.2.0
 
 ### Frontend
 

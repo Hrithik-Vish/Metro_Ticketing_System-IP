@@ -9,16 +9,18 @@ a Supabase Postgres database, and a Render web service.
 1. Go to https://supabase.com → New project.
 2. Pick a name, a strong database password (save it), and a region close to you.
 3. Once it's created, go to **Project Settings → Database**.
-4. Under **Connection string**, choose the **Session pooler** (port `6543`) —
-   NOT the direct connection (port `5432`). Render's free tier and most hosts
-   work more reliably through Supabase's pooler.
+4. Under **Connection string**, choose the **Session pooler** (port `5432` on the
+   `pooler.supabase.com` host) - NOT the direct connection. The direct host is
+   IPv6-only, which many hosts (including Render's free tier) can't reach.
+   The *Transaction* pooler (port `6543`) can cause "prepared statement" errors
+   with JDBC, so avoid it unless you know you need it.
 5. It looks like:
    ```
-   postgresql://postgres.xxxxxxxxxxxx:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:6543/postgres
+   postgresql://postgres.xxxxxxxxxxxx:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:5432/postgres
    ```
 6. You'll convert this into a JDBC URL for Spring Boot:
    ```
-   jdbc:postgresql://aws-0-<region>.pooler.supabase.com:6543/postgres
+   jdbc:postgresql://aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
    ```
    (same host/port/db name, just with `jdbc:` prefix and no embedded credentials —
    username and password go in separate env vars below.)
@@ -56,6 +58,17 @@ git push -u origin main
 
 First build takes a few minutes (Maven downloads dependencies + compiles).
 Render gives you a URL like `https://metro-ticketing.onrender.com`.
+
+## Running locally
+
+You need **JDK 21** and the three env vars above (or a local Postgres, see `docker-compose.yml`).
+
+```bash
+./mvnw spring-boot:run          # Windows: mvnw.cmd spring-boot:run
+```
+
+Swagger UI: http://localhost:8080/swagger-ui/index.html
+(use the group dropdown at the top right: **metro-cards** first, **full-api** for everything).
 
 ## 4. First run
 

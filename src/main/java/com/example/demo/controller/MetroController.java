@@ -2,7 +2,6 @@ package com.example.demo.controller;
 
 import com.example.demo.entity.Fare;
 import com.example.demo.entity.MaintenanceIssue;
-import com.example.demo.entity.MetroCard;
 import com.example.demo.entity.Payment;
 import com.example.demo.entity.Route;
 import com.example.demo.entity.RouteStation;
@@ -13,7 +12,6 @@ import com.example.demo.entity.Train;
 import com.example.demo.entity.User;
 import com.example.demo.repository.FareRepository;
 import com.example.demo.repository.MaintenanceIssueRepository;
-import com.example.demo.repository.MetroCardRepository;
 import com.example.demo.repository.PaymentRepository;
 import com.example.demo.repository.RouteRepository;
 import com.example.demo.repository.RouteStationRepository;
@@ -59,13 +57,12 @@ public class MetroController {
     private final PaymentRepository payments;
     private final TrainRepository trains;
     private final ScheduleRepository schedules;
-    private final MetroCardRepository metroCards;
     private final RouteStationRepository routeStations;
     private final MaintenanceIssueRepository maintenanceIssues;
 
     public MetroController(UserRepository users, StationRepository stations, RouteRepository routes,
                            FareRepository fares, TicketRepository tickets, PaymentRepository payments,
-                           TrainRepository trains, ScheduleRepository schedules, MetroCardRepository metroCards,
+                           TrainRepository trains, ScheduleRepository schedules,
                            RouteStationRepository routeStations, MaintenanceIssueRepository maintenanceIssues) {
         this.users = users;
         this.stations = stations;
@@ -75,7 +72,6 @@ public class MetroController {
         this.payments = payments;
         this.trains = trains;
         this.schedules = schedules;
-        this.metroCards = metroCards;
         this.routeStations = routeStations;
         this.maintenanceIssues = maintenanceIssues;
     }
@@ -342,13 +338,6 @@ public class MetroController {
     @PutMapping("/schedules/{id}") public Schedule updateSchedule(@PathVariable String id, @RequestBody Schedule schedule) { schedule.scheduleId = id; return schedules.save(schedule); }
     @DeleteMapping("/schedules/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteSchedule(@PathVariable String id) { schedules.deleteById(id); }
-
-    @GetMapping("/metro-cards") public List<MetroCard> metroCards() { return metroCards.findAll(); }
-    @PostMapping("/metro-cards") @ResponseStatus(HttpStatus.CREATED)
-    public MetroCard createMetroCard(@RequestBody MetroCard card) { return metroCards.save(card); }
-    @PutMapping("/metro-cards/{id}") public MetroCard updateMetroCard(@PathVariable String id, @RequestBody MetroCard card) { card.cardId = id; return metroCards.save(card); }
-    @DeleteMapping("/metro-cards/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteMetroCard(@PathVariable String id) { metroCards.deleteById(id); }
 
     @GetMapping("/route-stations") public List<RouteStation> routeStations() { return routeStations.findAll(); }
     @GetMapping("/routes/{routeId}/stations")
