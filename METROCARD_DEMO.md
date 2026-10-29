@@ -26,7 +26,14 @@ Seed data: `MC-1001` (rider1, 500.00) and `MC-1002` (rider2, 150.00). Users `rid
 | 16 | Repeat step 14 until the balance is too low | same | 400 "Insufficient metro card balance..." and the balance is unchanged |
 | 17 | DELETE `/api/metro-cards/MC-2001` | none | 204 |
 | 18 | DELETE again | none | 404 |
+| 19 | POST `/api/metro-cards/MC-1001/top-up` | `{"amount":500.00}` | 200, wallet balance increases and a top-up appears in activity |
+| 20 | GET `/api/metro-cards/MC-1001/transactions` | none | 200, recent top-ups, pass purchases, and card-paid fares |
+| 21 | POST `/api/metro-cards/MC-1001/passes` | `{"passType":"DAY"}` | 200, buys a 24-hour unlimited pass for ₹120 from the card balance |
+| 22 | GET `/api/metro-cards/MC-1001/passes` | none | 200, pass purchase history with start and expiry timestamps |
+| 23 | POST `/api/bookings` using `paymentMethod":"METRO_CARD"` | existing booking body | An active time pass covers the ride for ₹0; otherwise the fare is deducted from stored value |
 
 Use `operator1` for steps 4-17 because `rider1` and `rider2` already hold an active card.
 
 Get real station IDs from GET `/api/stations`. Omit `paymentMethod` (or send `DEMO`) for the original simulated checkout, which doesn't touch any card.
+
+Pass plans: `DAY` is unlimited for 24 hours (₹120), `WEEK` for 7 days (₹600), and `MONTH` for 30 days (₹1,800). A pass starts immediately, or queues after an active/upcoming pass. Pass purchases require sufficient stored balance. Top-ups accept ₹1–₹10,000 per transaction with up to two decimal places.

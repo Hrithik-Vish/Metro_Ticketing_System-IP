@@ -37,14 +37,14 @@ This package contains an offline repair pass for the college demonstration proje
 
 ## Verification performed
 
-- `node --check src/main/resources/static/app.js` — passed.
-- HTML parse and duplicate-ID check — passed (186 IDs checked, no duplicate IDs; all 13 forms have IDs).
-- `pom.xml` XML parse — passed.
-- Browser integration tests run against the project's actual HTML, CSS, and JavaScript with an isolated in-memory mock API (no Render/Supabase writes): **24/24 passed**, with no browser page errors and no mock API errors. The checks cover signup validation, signin, transfer fares, the exact 1×/2×/3× single/return/day-pass multipliers, multi-passenger return booking, rejection when segment fares are missing, ticket persistence across refresh, ticket download, schedule filtering and station offsets, cancellation state, interchange rendering, admin booking, route creation, and ordered stop edits.
+- `node --check` passed for `core.js`, `views.js`, and `app.js` after splitting the frontend.
+- The script split loaded without global declaration conflicts.
+- Spring Boot started with the isolated `preview` profile using the in-memory H2 database. Java 21 is the version specified in `pom.xml`.
+- The browser in this build environment could not reach its local server port, so live browser-to-API interaction was not confirmed here. No request was sent to Render or Supabase.
 
-## Verification limitation
+## Local preview
 
-The Java/Maven build could not be completed in the repair environment. The project specifies Java 25; only Java 21 is installed here, no system Maven is available, and the Maven wrapper could not download its Maven distribution due to network restrictions in this environment. As a result, this package should be built and smoke-tested once after extraction in an environment with Java 25/network access (or through your Render build). I am not claiming a successful Java compilation or live Supabase integration test.
+Double-click `START_PREVIEW.cmd` and open `http://localhost:8080/`. The `preview` profile uses a temporary H2 database and does not connect to the configured PostgreSQL database. Data resets when the app stops. Directly opening the HTML file is only a visual preview; API-backed actions require the running server.
 
 ## Deploying
 

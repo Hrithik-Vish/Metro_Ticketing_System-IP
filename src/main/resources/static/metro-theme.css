@@ -1,0 +1,88 @@
+/* ===== MetroPass theme layer: loaded after styles.css ===== */
+/* Old skyline scene is replaced by the metro map (scene-map.js) */
+.metro-scene > .scene-layer, .metro-scene > .scene-parallax { display: none !important; }
+.metro-scene {
+  --tile: rgba(15, 23, 42, .045);
+  background:
+    radial-gradient(1100px 600px at 12% -10%, color-mix(in srgb, var(--line-blue) 14%, transparent), transparent 70%),
+    radial-gradient(900px 560px at 100% 105%, color-mix(in srgb, var(--line-coral) 12%, transparent), transparent 70%),
+    linear-gradient(var(--tile) 1px, transparent 1px) 0 0 / 96px 48px,
+    linear-gradient(90deg, var(--tile) 1px, transparent 1px) 0 0 / 96px 48px,
+    var(--paper);
+}
+:root[data-theme="dark"] .metro-scene { --tile: rgba(255, 255, 255, .035); }
+
+.scene-map { position: absolute; inset: 0; opacity: calc(1 / var(--scene-dim, 1)); transition: opacity .6s var(--ease); }
+.scene-map svg { width: 100%; height: 100%; display: block; }
+/* platform edge: tactile strip along the bottom of the screen */
+.scene-map::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 10px;
+  background: repeating-linear-gradient(90deg, #F5B921 0 14px, transparent 14px 22px);
+  opacity: .5; border-top: 2px solid rgba(245, 185, 33, .55);
+}
+.map-line { fill: none; stroke-width: 9; stroke-linecap: round; stroke-linejoin: round; opacity: .3;
+  stroke-dasharray: var(--len); stroke-dashoffset: var(--len); animation: map-draw 2.4s var(--ease-out) forwards; }
+:root[data-theme="dark"] .map-line { opacity: .42; }
+.map-stop { fill: var(--paper); stroke-width: 3.5; opacity: .9; }
+.map-hub { fill: var(--paper); stroke: var(--ink); stroke-width: 3; opacity: .55; }
+.map-hub-core { fill: var(--ink); opacity: .5; }
+.map-pulse { fill: none; stroke: var(--ink); stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: center; animation: map-pulse 4.5s ease-out infinite; }
+.map-train { opacity: .95; }
+.map-trail { opacity: .22; }
+.map-win { fill: #fff; opacity: .85; }
+@keyframes map-draw { to { stroke-dashoffset: 0; } }
+@keyframes map-pulse { 0% { opacity: .5; transform: scale(.6); } 70%, 100% { opacity: 0; transform: scale(1.7); } }
+@media (prefers-reduced-motion: reduce) {
+  .map-line { animation: none; stroke-dashoffset: 0; }
+  .map-pulse { animation: none; }
+}
+
+/* Sidebar: navigation reads as one line diagram, each page is a station */
+.nav-list { position: relative; gap: 4px; }
+.nav-list::before {
+  content: ""; position: absolute; left: 20px; top: 16px; bottom: 16px; width: 3px; border-radius: 3px; opacity: .6;
+  background: linear-gradient(var(--line-blue), var(--line-teal) 40%, var(--line-coral) 70%, var(--line-violet));
+}
+.nav-item .nav-icon {
+  width: 26px; height: 26px; margin-left: -4px; border-radius: 50%; display: grid; place-items: center; font-size: 12px;
+  background: var(--navy); border: 2px solid rgba(255,255,255,.3); position: relative; z-index: 1;
+  transition: transform var(--dur-fast) var(--ease), background var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.nav-item.active { background: rgba(255,255,255,.08); }
+.nav-item.active .nav-icon { background: #fff; border-color: var(--line-coral); box-shadow: 0 0 0 5px rgba(242,118,98,.25); }
+
+/* Top bar: line-colour strip like a station sign */
+.topbar {
+  background-image: linear-gradient(90deg, var(--line-blue) 0 25%, var(--line-teal) 0 50%, var(--line-coral) 0 75%, var(--line-violet) 0);
+  background-size: 100% 3px; background-repeat: no-repeat; background-position: bottom;
+}
+
+/* Departures read like a platform dot-matrix board */
+.dashboard-departure time {
+  font-family: var(--mono); font-weight: 700; letter-spacing: .06em; color: #FFB547; background: #0B0F16;
+  padding: 5px 9px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+}
+.departures-live i { animation: live-blink 1.6s ease-in-out infinite; }
+@keyframes live-blink { 50% { opacity: .25; } }
+
+/* Panels: a short line-colour notch gives each card a station-sign edge */
+.panel { position: relative; }
+.panel::before { content: ""; position: absolute; left: 18px; top: -1px; width: 34px; height: 3px; border-radius: 0 0 3px 3px; background: var(--line-blue); opacity: .85; }
+.panel:nth-of-type(3n+2)::before { background: var(--line-teal); }
+.panel:nth-of-type(3n)::before { background: var(--line-coral); }
+
+/* ===== Fixes ===== */
+html { background: var(--paper); }
+body, .app-shell { background: transparent; }
+.map-line { opacity: .42; }
+:root[data-theme="dark"] .map-line { opacity: .55; }
+/* nav line stops at the last station */
+.nav-list { flex: 0 0 auto; padding-bottom: 4px; }
+.account-box { margin-top: auto; }
+.nav-list::before { bottom: 18px; }
+.nav-item.active { box-shadow: none; }
+/* spacing between the hero row and the stat cards */
+.dashboard-hero-grid { margin-bottom: 20px; }
+/* dropdown arrow no longer overlaps the selected text */
+select { padding-right: 36px; text-overflow: ellipsis; }
+.journey-card select, .panel select, select { padding-right: 38px !important; }

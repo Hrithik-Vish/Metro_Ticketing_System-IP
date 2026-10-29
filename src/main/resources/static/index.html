@@ -7,12 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./metro-theme.css">
   <script>
     (function () {
       try {
-        var saved = localStorage.getItem('metroTheme');
-        var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        var saved = localStorage.getItem('metroThemeV2');
+        var theme = saved || 'light';
         document.documentElement.setAttribute('data-theme', theme);
         var signedIn = Boolean(localStorage.getItem('metroUser'));
         document.documentElement.setAttribute('data-scene-day', signedIn ? '1' : '0');
@@ -232,17 +233,12 @@
           <h2 class="auth-form-title">Create your account</h2>
           <div class="two-fields">
             <label>First name<input id="signup-first" required></label>
-            <label>Last name<input id="signup-last" required></label>
+            <label>Last name<input id="signup-last"></label>
           </div>
-          <label>User ID<input id="signup-user" autocomplete="username" minlength="3" required></label>
-          <label>Contact<input id="signup-contact" type="email" placeholder="name@example.com" required></label>
-          <label>Account type
-            <select id="signup-role">
-              <option value="USER">Passenger</option>
-              <option value="ADMIN">Admin / operator</option>
-            </select>
-          </label>
-          <label>Password<input id="signup-password" type="password" autocomplete="new-password" minlength="6" required></label>
+          <label>User ID<input id="signup-user" autocomplete="username" minlength="3" required><span class="field-hint">At least 3 characters.</span></label>
+          <label>Email<input id="signup-contact" type="email" placeholder="name@example.com" required></label>
+          <label>Password<input id="signup-password" type="password" autocomplete="new-password" minlength="6" maxlength="72" required><span class="field-hint">6 to 72 characters.</span></label>
+          <p class="field-hint">Accounts created here are passenger accounts. Staff accounts are added by an administrator.</p>
           <p id="signup-error" class="field-error" role="alert"></p>
           <button id="signup-submit" class="primary-action full" type="submit">
             <span>Create passenger account</span>
@@ -297,6 +293,7 @@
       <!-- ============ HOME / DASHBOARD ============ -->
       <section id="view-dashboard" class="view active-view">
 
+        <div class="dashboard-hero-grid">
         <!-- Passenger hero: journey planner -->
         <section id="journey-card" class="journey-card">
           <div class="journey-card-head">
@@ -352,6 +349,13 @@
             </button>
           </form>
         </section>
+        <aside class="dashboard-transit-panel">
+          <div class="dashboard-transit-heading"><div><p class="eyebrow">YOUR NETWORK</p><h2>Next departures</h2></div><span class="departures-live"><i></i> Schedules</span></div>
+          <div id="dashboard-map-preview" class="dashboard-map-preview" aria-label="Metro route map preview"></div>
+          <div id="dashboard-departures" class="dashboard-departures"></div>
+          <a class="dashboard-network-link" href="#network">Explore all stations <span aria-hidden="true">→</span></a>
+        </aside>
+        </div>
 
         <div id="stats-grid" class="stats-grid stagger"></div>
 
@@ -440,7 +444,7 @@
               <table class="fare-table">
                 <tbody id="fare-breakdown-rows"></tbody>
                 <tfoot>
-                  <tr><td>Total</td><td id="fare-total">₹0</td></tr>
+                  <tr><td>Estimated total</td><td id="fare-total">₹0</td></tr>
                 </tfoot>
               </table>
               <input type="hidden" id="booking-amount">
@@ -454,9 +458,14 @@
               <h3>Payment</h3>
               <div class="route-recap" id="route-recap-4"></div>
               <div class="mock-payment">
-                <div class="mock-payment-row"><span>Amount payable</span><strong id="payment-amount">₹0</strong></div>
-                <p class="mock-payment-note">This is a demo checkout — confirming will simulate payment and generate your ticket immediately.</p>
+                <div class="mock-payment-row"><span>Estimated amount</span><strong id="payment-amount">₹0</strong></div>
+                <p class="mock-payment-note" id="payment-note">This is a demo checkout. Confirming will simulate payment and generate your ticket immediately.</p>
               </div>
+              <fieldset class="pay-method" id="pay-method">
+                <legend>Pay with</legend>
+                <label class="pay-option"><input type="radio" name="payment-method" value="DEMO" checked><span><strong>Demo checkout</strong><small>Simulated payment, no balance used</small></span></label>
+                <label class="pay-option" id="pay-option-card"><input type="radio" name="payment-method" value="METRO_CARD"><span><strong>Metro card</strong><small id="pay-card-note">Checking card</small></span></label>
+              </fieldset>
               <div class="step-actions">
                 <button type="button" class="ghost-action" data-step-prev="3">Back</button>
                 <button class="primary-action large" type="submit" id="booking-submit">
@@ -543,7 +552,7 @@
       <!-- ============ METRO CARD (passenger) ============ -->
       <section id="view-card" class="view">
         <div class="page-heading">
-          <div><p class="eyebrow">Wallet</p><h2>Metro card</h2><p>Your stored balance for faster boarding.</p></div>
+          <div><p class="eyebrow">WALLET · CITY TRANSIT</p><h2>Your travel wallet</h2><p>Top up once, tap through the network, or switch to an unlimited time pass.</p></div>
         </div>
         <div id="metrocard-slot" class="metrocard-slot"></div>
       </section>
@@ -584,8 +593,11 @@
             <summary>+ Add station</summary>
             <form id="station-form" class="form-grid">
               <label>Station ID<input id="station-id" placeholder="ST-NEW" required></label>
-              <label>Name<input id="station-code" placeholder="Central" required></label>
+              <label>Station code<input id="station-code" placeholder="Central" required></label>
               <label>Address<input id="station-address" placeholder="Area or terminal"></label>
+              <label>Latitude<input id="station-lat" type="number" step="any" min="-90" max="90" placeholder="19.4559"></label>
+              <label>Longitude<input id="station-lng" type="number" step="any" min="-180" max="180" placeholder="72.7925"></label>
+              <label>Opened date<input id="station-opened" type="date"></label>
               <label>Line color<input id="station-color" type="color" value="#2563eb"></label>
               <button class="dark-action" type="submit">Save station</button>
             </form>
@@ -618,6 +630,10 @@
               <label>Route name<input id="route-name" placeholder="Purple Line" required></label>
               <label>Start station<select id="route-start" required></select></label>
               <label>End station<select id="route-end" required></select></label>
+              <div class="route-stop-builder">
+                <div class="route-stop-builder-heading"><div><strong>Intermediate stops</strong><span class="field-hint">Optional. Use the arrows to set the travel order.</span></div><button id="route-intermediate-add" class="ghost-action" type="button">+ Add stop</button></div>
+                <div id="route-intermediate-list" class="route-intermediate-list"></div>
+              </div>
               <label>Total distance (km)<input id="route-distance" type="number" min="0.1" step="0.1" required></label>
               <label>Estimated time (minutes)<input id="route-time" type="number" min="1" step="1" required></label>
               <label>Line colour<input id="route-color" type="color" value="#7c3aed"></label>
@@ -639,7 +655,7 @@
             <form id="route-station-form" class="form-grid">
               <label>Route<select id="route-station-route" required></select></label>
               <label>Station<select id="route-station-station" required></select></label>
-              <label>Insert before sequence<input id="route-station-sequence" type="number" min="2" step="1" value="2" required></label>
+              <label>Insert before stop number<input id="route-station-sequence" type="number" min="2" step="1" value="2" required><span class="field-hint">The first and last stops stay fixed; this adds a stop between them.</span></label>
               <button class="dark-action" type="submit">Add stop</button>
             </form>
           </details>
@@ -701,6 +717,7 @@
               </select></label>
               <label>Departure<input id="schedule-departure" type="datetime-local" required></label>
               <label>Arrival<input id="schedule-arrival" type="datetime-local" required></label>
+              <label>Valid from<input id="schedule-valid-from" type="date"><span class="field-hint">Defaults to the departure date.</span></label>
               <label>Valid through<input id="schedule-valid-to" type="date"></label>
               <button class="dark-action" type="submit">Save schedule</button>
             </form>
@@ -743,7 +760,7 @@
         <section class="panel table-panel">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Payment</th><th>Ticket</th><th>Amount</th><th>Date</th></tr></thead>
+              <thead><tr><th>Payment</th><th>Ticket</th><th>Amount</th><th>Paid with</th><th>Date</th></tr></thead>
               <tbody id="payments-table"></tbody>
             </table>
           </div>
@@ -789,6 +806,9 @@
               <label>Card ID<input id="metrocard-id" placeholder="MC-1003" required></label>
               <label>Passenger<select id="metrocard-passenger" required></select></label>
               <label>Opening balance<input id="metrocard-balance" type="number" min="0" step="0.01" required></label>
+              <label>Issue date<input id="metrocard-issue" type="date" required></label>
+              <label>Expiry date<input id="metrocard-expiry" type="date" required></label>
+              <label class="check-field"><input id="metrocard-active" type="checkbox" checked>Active on issue</label>
               <button class="dark-action" type="submit">Issue card</button>
             </form>
           </details>
@@ -812,11 +832,14 @@
           <details class="admin-form-details">
             <summary>+ Add user</summary>
             <form id="admin-user-form" class="form-grid">
-              <label>User ID<input id="admin-user-id" required></label>
-              <label>Name<input id="admin-user-name" placeholder="First Last" required></label>
-              <label>Contact<input id="admin-user-contact" type="email" required></label>
+              <label>User ID<input id="admin-user-id" minlength="3" required><span class="field-hint">At least 3 characters.</span></label>
+              <label>First name<input id="admin-user-first" required></label>
+              <label>Last name (optional)<input id="admin-user-last"></label>
+              <label>Email<input id="admin-user-contact" type="email" required></label>
               <label>Role<select id="admin-user-role"><option value="USER">Passenger</option><option value="ADMIN">Admin</option></select></label>
-              <label>Password<input id="admin-user-password" type="password" value="password123" minlength="6" required></label>
+              <label>Assigned station (staff, optional)<select id="admin-user-station"></select></label>
+              <label>Hire date (staff, optional)<input id="admin-user-hire-date" type="date"></label>
+              <label>Password<input id="admin-user-password" type="password" value="password123" minlength="6" maxlength="72" required><span class="field-hint">6 to 72 characters.</span></label>
               <button class="dark-action" type="submit">Save user</button>
             </form>
           </details>
@@ -828,7 +851,7 @@
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>User</th><th>Contact</th><th>Role</th><th>Registered</th><th>Status</th><th>Actions</th></tr></thead>
+              <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Registered</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody id="users-table"></tbody>
             </table>
           </div>
@@ -867,6 +890,12 @@
     </main>
   </div>
 
-  <script src="/app.js"></script>
+  <div id="wake-banner" class="wake-banner" role="status" hidden>Waking up the server. This can take up to a minute after a quiet period.</div>
+  <div id="modal-host"></div>
+
+  <script src="./scene-map.js"></script>
+  <script src="./core.js"></script>
+  <script src="./views.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
