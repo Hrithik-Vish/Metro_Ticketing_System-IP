@@ -113,8 +113,17 @@ Metro Ticketing System
 |   +-- DemoApplication.java
 |   +-- DataInitializer.java
 |   |
-|   +-- controller
-|   |   +-- MetroController.java
+|   +-- controller        (one controller per area, each with its own Swagger tag)
+|   |   +-- AuthController.java, UserController.java, StationController.java
+|   |   +-- RouteController.java, RouteStationController.java, FareController.java
+|   |   +-- TrainController.java, ScheduleController.java, MaintenanceIssueController.java
+|   |   +-- BookingController.java, TicketController.java, PaymentController.java
+|   |   +-- MetroCardController.java
+|   |
+|   +-- service           (BookingService, PasswordService)
+|   +-- dto               (request/response bodies)
+|   +-- exception         (Errors helpers, GlobalExceptionHandler)
+|   +-- config            (OpenApiConfig, PasswordConfig)
 |   |
 |   +-- entity
 |   |   +-- User.java
@@ -234,36 +243,34 @@ Example demo accounts include `admin`, `operator1`, `rider1`, and `rider2`.
 
 ---
 
-### 3.3 `controller/MetroController.java`
+### 3.3 `controller/` (one controller per area)
 
-This is the **main REST controller for the entire backend**.
+The API is split into one controller per area. Every controller is mapped under `/api/...` and has its own tag in Swagger.
 
-It is mapped under:
+| Controller | Base path | What it does |
+|---|---|---|
+| `AuthController` | `/api/auth` | Sign in, sign up (passengers only) |
+| `UserController` | `/api/users` | User CRUD, tickets of one user |
+| `StationController` | `/api/stations` | Station CRUD |
+| `RouteController` | `/api/routes` | Route CRUD, ordered stops, insert/remove stops |
+| `RouteStationController` | `/api/route-stations` | Raw route-to-station mappings |
+| `FareController` | `/api/fares` | Fare CRUD |
+| `TrainController` | `/api/trains` | Train CRUD |
+| `ScheduleController` | `/api/schedules` | Schedule CRUD |
+| `MaintenanceIssueController` | `/api/maintenance-issues` | Maintenance issue CRUD |
+| `BookingController` | `/api/bookings` | Book a journey (server-side fare, optional metro-card payment) |
+| `TicketController` | `/api/tickets` | Ticket list/update/delete (delete refunds a card-paid unused ticket) |
+| `PaymentController` | `/api/payments` | Payment records |
+| `MetroCardController` | `/api/metro-cards` | Metro-card CRUD, PATCH, top-up |
 
-```text
-/api
-```
+Shared rules:
 
-Rather than using one controller per domain object, this project centralizes the API endpoints in a single controller.
+- **Update (PUT) of a missing record returns 404**; creating an ID that already exists returns 409.
+- **Delete is checked**: a station, train, fare or user that is still used by other records returns 409 with a message listing what uses it. Deleting a route also deletes its schedules and stops.
+- **Passwords are stored as BCrypt hashes** (`PasswordService`). Any old plain-text password is hashed at startup. Sign-up always creates a passenger.
+- **Errors** use one JSON shape with a readable `detail` (and an `errors` map for field validation), see `exception/GlobalExceptionHandler`.
 
-It handles:
-
-- Authentication
-- User CRUD
-- Station CRUD
-- Route CRUD
-- Fare CRUD
-- Ticket CRUD
-- Payment creation/listing
-- Train CRUD
-- Schedule CRUD
-- Metro-card CRUD
-- Route-station operations
-- Maintenance-issue CRUD
-- Passenger-specific ticket lookup
-- Route-specific ordered station lookup
-
-The controller directly uses Spring Data repositories to read/write entities.
+Business logic that is more than simple CRUD (fare calculation, route search, card payment) lives in `service/BookingService`.
 
 Simplified architecture:
 
@@ -271,20 +278,15 @@ Simplified architecture:
 HTTP Request
      |
      v
-MetroController
-     |
-     v
-Repository
+Controller  --->  Service (booking, passwords)
+     |                |
+     v                v
+Repository (Spring Data JPA)
      |
      v
 PostgreSQL
      |
      v
-JSON Response
-```
-
-There is **no separate Service layer** in this project.
-
 ---
 
 ## 4. Database Model: 11 Entity Classes
@@ -1091,13 +1093,13 @@ Spring Boot
  +--> Connects to PostgreSQL
 ```
 
-### Single REST controller
+### One controller per area
 
-The current project centralizes API endpoints in `MetroController.java` rather than splitting them into many controller classes.
+Each area (users, stations, routes, fares, trains, schedules, tickets, metro cards...) has its own controller and Swagger tag.
 
 ### Repository-driven database access
 
-The controller talks directly to Spring Data JPA repositories. There is no dedicated business/service layer in the current structure.
+Simple CRUD controllers talk to Spring Data JPA repositories directly. Booking and password logic live in `service/`.
 
 ### Client-side application logic
 
@@ -1201,7 +1203,7 @@ The complete architecture can be summarized as:
                                    v
                               SPRING BOOT
                                    |
-                         MetroController.java
+                         Controllers + Services
                                    |
                          Spring Data JPA
                                    |
@@ -1238,7 +1240,7 @@ When trying to understand the codebase, start with these files in this order:
 2. DemoApplication.java
        |
        v
-3. MetroController.java
+3. controller/*.java and service/*.java
        |
        +--> entity/*.java
        |
@@ -1292,7 +1294,7 @@ Frontend
 
 Backend
     |
-    +--> MetroController.java
+    +--> controller/*.java and service/*.java
 
 Database Model
     |

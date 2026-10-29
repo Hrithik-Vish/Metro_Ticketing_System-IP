@@ -22,6 +22,7 @@ import com.example.demo.repository.StationRepository;
 import com.example.demo.repository.TicketRepository;
 import com.example.demo.repository.TrainRepository;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.service.PasswordService;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
@@ -46,11 +47,13 @@ public class DataInitializer implements CommandLineRunner {
     private final MetroCardRepository metroCards;
     private final RouteStationRepository routeStations;
     private final MaintenanceIssueRepository maintenanceIssues;
+    private final PasswordService passwords;
 
     public DataInitializer(UserRepository users, StationRepository stations, RouteRepository routes,
                            FareRepository fares, TicketRepository tickets, PaymentRepository payments,
                            TrainRepository trains, ScheduleRepository schedules, MetroCardRepository metroCards,
-                           RouteStationRepository routeStations, MaintenanceIssueRepository maintenanceIssues) {
+                           RouteStationRepository routeStations, MaintenanceIssueRepository maintenanceIssues,
+                           PasswordService passwords) {
         this.users = users;
         this.stations = stations;
         this.routes = routes;
@@ -62,10 +65,12 @@ public class DataInitializer implements CommandLineRunner {
         this.metroCards = metroCards;
         this.routeStations = routeStations;
         this.maintenanceIssues = maintenanceIssues;
+        this.passwords = passwords;
     }
 
     @Override
     public void run(String... args) {
+        passwords.hashLegacyPasswords();
         boolean freshDatabase = users.count() == 0 && stations.count() == 0 && routes.count() == 0
                 && fares.count() == 0 && tickets.count() == 0 && payments.count() == 0
                 && trains.count() == 0 && schedules.count() == 0 && metroCards.count() == 0
@@ -288,7 +293,7 @@ public class DataInitializer implements CommandLineRunner {
         user.userId = id;
         user.firstName = first;
         user.lastName = last;
-        user.password = password;
+        user.password = passwords.hash(password);
         user.role = role;
         user.contact = contact;
         user.registrationDate = LocalDate.now();

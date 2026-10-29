@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface RouteStationRepository extends JpaRepository<RouteStation, Long> {
     List<RouteStation> findByRouteIdOrderBySequenceNumberAsc(String routeId);
+
+    boolean existsByStationId(String stationId);
 }

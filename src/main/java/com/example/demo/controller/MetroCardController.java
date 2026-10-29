@@ -5,11 +5,7 @@ import com.example.demo.dto.MetroCardPatchRequest;
 import com.example.demo.dto.MetroCardReplaceRequest;
 import com.example.demo.dto.MetroCardTopUpRequest;
 import com.example.demo.entity.MetroCard;
-import com.example.demo.entity.MetroCardPass;
-import com.example.demo.entity.MetroCardTransaction;
 import com.example.demo.repository.MetroCardRepository;
-import com.example.demo.repository.MetroCardPassRepository;
-import com.example.demo.repository.MetroCardTransactionRepository;
 import com.example.demo.repository.UserRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -21,7 +17,6 @@ import jakarta.validation.Valid;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.UUID;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,15 +39,10 @@ public class MetroCardController {
 
     private final MetroCardRepository metroCards;
     private final UserRepository users;
-    private final MetroCardPassRepository passes;
-    private final MetroCardTransactionRepository transactions;
 
-    public MetroCardController(MetroCardRepository metroCards, UserRepository users,
-                               MetroCardPassRepository passes, MetroCardTransactionRepository transactions) {
+    public MetroCardController(MetroCardRepository metroCards, UserRepository users) {
         this.metroCards = metroCards;
         this.users = users;
-        this.passes = passes;
-        this.transactions = transactions;
     }
 
     // ---------- helpers ----------
@@ -222,84 +212,7 @@ public class MetroCardController {
         }
         BigDecimal current = card.balance == null ? BigDecimal.ZERO : card.balance;
         card.balance = current.add(request.amount);
-        MetroCard updated = metroCards.save(card);
-        recordTransaction(card, "TOP_UP", "Wallet top-up", request.amount, card.balance);
-        return updated;
-    }
-
-    @GetMapping("/{id}/passes")
-    @Operation(summary = "List pass purchases and validity for a metro card")
-    public List<MetroCardPass> getPasses(@PathVariable String id) {
-        find(id);
-        return passes.findByCardIdOrderByCreatedAtDesc(id);
-    }
-
-    @GetMapping("/{id}/transactions")
-    @Operation(summary = "List recent wallet activity for a metro card")
-    public List<MetroCardTransaction> getTransactions(@PathVariable String id) {
-        find(id);
-        return transactions.findTop20ByCardIdOrderByCreatedAtDesc(id);
-    }
-
-    @PostMapping("/{id}/passes")
-    @Transactional
-    @Operation(summary = "Buy a time-based unlimited travel pass using the metro card balance")
-    public PassPurchaseResult buyPass(@PathVariable String id, @RequestBody PassPurchaseRequest request) {
-        MetroCard card = metroCards.findByIdForUpdate(id).orElseThrow(() ->
-                new ResponseStatusException(HttpStatus.NOT_FOUND, "Metro card not found: " + id));
-        if (!card.isActive || (card.expiryDate != null && card.expiryDate.isBefore(LocalDate.now()))) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only an active, unexpired card can buy a pass");
-        }
-        PassPlan plan = PassPlan.forType(request == null ? null : request.passType());
-        if (plan == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a valid travel pass");
-        BigDecimal balance = card.balance == null ? BigDecimal.ZERO : card.balance;
-        if (balance.compareTo(plan.price) < 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Insufficient balance. Top up " + plan.price.subtract(balance).setScale(2) + " more to buy this pass.");
-        }
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime startsAt = passes.findCurrentOrUpcomingByCardId(id, now)
-                .map(existing -> existing.expiresAt.isAfter(now) ? existing.expiresAt : now).orElse(now);
-        LocalDateTime expiresAt = startsAt.plusHours(plan.hours);
-        card.balance = balance.subtract(plan.price);
-        metroCards.save(card);
-        MetroCardPass pass = new MetroCardPass();
-        pass.passId = "MP-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase();
-        pass.cardId = id;
-        pass.passType = plan.type;
-        pass.price = plan.price;
-        pass.startsAt = startsAt;
-        pass.expiresAt = expiresAt;
-        pass.createdAt = now;
-        passes.save(pass);
-        recordTransaction(card, "PASS_PURCHASE", plan.label + " (" + pass.passId + ")", plan.price, card.balance);
-        return new PassPurchaseResult(pass, card);
-    }
-
-    private void recordTransaction(MetroCard card, String type, String description, BigDecimal amount, BigDecimal balance) {
-        MetroCardTransaction transaction = new MetroCardTransaction();
-        transaction.transactionId = "MT-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase();
-        transaction.cardId = card.cardId;
-        transaction.transactionType = type;
-        transaction.description = description;
-        transaction.amount = amount;
-        transaction.balanceAfter = balance;
-        transaction.createdAt = LocalDateTime.now();
-        transactions.save(transaction);
-    }
-
-    public record PassPurchaseRequest(String passType) {}
-    public record PassPurchaseResult(MetroCardPass pass, MetroCard card) {}
-    private record PassPlan(String type, String label, int hours, BigDecimal price) {
-        static PassPlan forType(String type) {
-            if (type == null) return null;
-            return switch (type.trim().toUpperCase()) {
-                case "DAY" -> new PassPlan("DAY", "24-hour pass", 24, new BigDecimal("120.00"));
-                case "WEEK" -> new PassPlan("WEEK", "7-day pass", 168, new BigDecimal("600.00"));
-                case "MONTH" -> new PassPlan("MONTH", "30-day pass", 720, new BigDecimal("1800.00"));
-                default -> null;
-            };
-        }
+        return metroCards.save(card);
     }
 
     @DeleteMapping("/{id}")

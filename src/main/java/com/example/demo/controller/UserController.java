@@ -1,20 +1,24 @@
 package com.example.demo.controller;
 
-import static com.example.demo.exception.Errors.badRequest;
+import static com.example.demo.exception.Errors.blank;
 import static com.example.demo.exception.Errors.conflict;
 import static com.example.demo.exception.Errors.notFound;
 import static com.example.demo.exception.Errors.requireFound;
 import static com.example.demo.exception.Errors.requireUnused;
 import static com.example.demo.exception.Errors.use;
 
+import com.example.demo.dto.UserCreateRequest;
+import com.example.demo.dto.UserUpdateRequest;
 import com.example.demo.entity.Ticket;
 import com.example.demo.entity.User;
 import com.example.demo.repository.MaintenanceIssueRepository;
 import com.example.demo.repository.MetroCardRepository;
 import com.example.demo.repository.TicketRepository;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.service.PasswordService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -37,13 +41,15 @@ public class UserController {
     private final TicketRepository tickets;
     private final MetroCardRepository metroCards;
     private final MaintenanceIssueRepository maintenanceIssues;
+    private final PasswordService passwords;
 
     public UserController(UserRepository users, TicketRepository tickets, MetroCardRepository metroCards,
-                          MaintenanceIssueRepository maintenanceIssues) {
+                          MaintenanceIssueRepository maintenanceIssues, PasswordService passwords) {
         this.users = users;
         this.tickets = tickets;
         this.metroCards = metroCards;
         this.maintenanceIssues = maintenanceIssues;
+        this.passwords = passwords;
     }
 
     @GetMapping
@@ -60,37 +66,43 @@ public class UserController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Create a user (admin)")
-    public User create(@RequestBody User user) {
-        if (user.userId == null || user.userId.isBlank() || user.password == null || user.password.isBlank()) {
-            throw badRequest("User ID and password are required");
-        }
-        if (users.existsById(user.userId)) {
+    @Operation(summary = "Create a user (admin)",
+            description = "The role can be USER (default) or ADMIN. The password is stored as a BCrypt hash.")
+    public User create(@Valid @RequestBody UserCreateRequest request) {
+        if (users.existsById(request.userId)) {
             throw conflict("User ID already exists");
         }
-        user.role = user.role == null || user.role.isBlank() ? "USER" : user.role.toUpperCase();
-        if (!user.role.equals("USER") && !user.role.equals("ADMIN")) {
-            throw badRequest("Role must be USER or ADMIN");
-        }
-        user.registrationDate = user.registrationDate == null ? LocalDate.now() : user.registrationDate;
+        User user = new User();
+        user.userId = request.userId;
+        user.firstName = request.firstName;
+        user.lastName = request.lastName;
+        user.contact = request.contact;
+        user.password = passwords.hash(request.password);
+        user.role = request.role == null ? "USER" : request.role.toUpperCase();
+        user.registrationDate = request.registrationDate == null ? LocalDate.now() : request.registrationDate;
+        user.isActive = request.isActive == null || request.isActive;
+        user.hireDate = request.hireDate;
+        user.stationId = request.stationId;
         return users.save(user);
     }
 
     @PutMapping("/{id}")
-    @Operation(summary = "Update a user")
-    public User update(@PathVariable String id, @RequestBody User user) {
-        User existing = users.findById(id).orElseThrow(() -> notFound("User not found"));
-        existing.firstName = user.firstName == null ? existing.firstName : user.firstName;
-        existing.lastName = user.lastName == null ? existing.lastName : user.lastName;
-        existing.contact = user.contact == null ? existing.contact : user.contact;
-        existing.role = user.role == null ? existing.role : user.role;
-        existing.registrationDate = user.registrationDate == null ? existing.registrationDate : user.registrationDate;
-        existing.isActive = user.isActive;
-        existing.hireDate = user.hireDate == null ? existing.hireDate : user.hireDate;
-        existing.stationId = user.stationId == null ? existing.stationId : user.stationId;
-        if (user.password != null && !user.password.isBlank()) existing.password = user.password;
+    @Operation(summary = "Update a user",
+            description = "Fields left out keep their value. Send a password (6 to 72 characters) to reset it. 404 if the user does not exist.")
+    public User update(@PathVariable String id, @Valid @RequestBody UserUpdateRequest request) {
+        User existing = users.findById(id).orElseThrow(() -> notFound("User not found: " + id));
+        if (request.firstName != null) existing.firstName = request.firstName;
+        if (request.lastName != null) existing.lastName = request.lastName;
+        if (request.contact != null) existing.contact = request.contact;
+        if (request.role != null) existing.role = request.role.toUpperCase();
+        if (request.registrationDate != null) existing.registrationDate = request.registrationDate;
+        if (request.isActive != null) existing.isActive = request.isActive;
+        if (request.hireDate != null) existing.hireDate = request.hireDate;
+        if (request.stationId != null) existing.stationId = request.stationId;
+        if (!blank(request.password)) existing.password = passwords.hash(request.password);
         return users.save(existing);
     }
+
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(summary = "Delete a user",
