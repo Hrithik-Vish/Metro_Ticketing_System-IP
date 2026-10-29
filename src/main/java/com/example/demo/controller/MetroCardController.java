@@ -3,6 +3,7 @@ package com.example.demo.controller;
 import com.example.demo.dto.MetroCardCreateRequest;
 import com.example.demo.dto.MetroCardPatchRequest;
 import com.example.demo.dto.MetroCardReplaceRequest;
+import com.example.demo.dto.MetroCardTopUpRequest;
 import com.example.demo.entity.MetroCard;
 import com.example.demo.repository.MetroCardRepository;
 import com.example.demo.repository.UserRepository;
@@ -13,6 +14,7 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -187,6 +189,29 @@ public class MetroCardController {
         if (card.isActive && (ownerChanged || activationChanged)) {
             requireNoOtherActiveCard(card.passengerId, id);
         }
+        return metroCards.save(card);
+    }
+
+    @PostMapping("/{id}/top-up")
+    @Transactional
+    @Operation(summary = "Top up a metro card",
+            description = "Adds the given amount to the card balance. The card must be active and not expired.")
+    @ApiResponse(responseCode = "200", description = "Balance increased; the updated card is returned")
+    @ApiResponse(responseCode = "400", description = "Invalid amount", content = @Content)
+    @ApiResponse(responseCode = "404", description = "Card not found", content = @Content)
+    @ApiResponse(responseCode = "409", description = "Card is inactive or expired", content = @Content)
+    public MetroCard topUp(@Parameter(description = "Card ID", example = "MC-1001") @PathVariable String id,
+                           @Valid @RequestBody MetroCardTopUpRequest request) {
+        MetroCard card = metroCards.findByIdForUpdate(id).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.NOT_FOUND, "Metro card not found: " + id));
+        if (!card.isActive) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Metro card " + id + " is inactive");
+        }
+        if (card.expiryDate != null && card.expiryDate.isBefore(LocalDate.now())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Metro card " + id + " has expired");
+        }
+        BigDecimal current = card.balance == null ? BigDecimal.ZERO : card.balance;
+        card.balance = current.add(request.amount);
         return metroCards.save(card);
     }
 

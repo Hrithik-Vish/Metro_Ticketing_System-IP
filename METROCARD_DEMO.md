@@ -19,7 +19,14 @@ Seed data: `MC-1001` (rider1, 500.00) and `MC-1002` (rider2, 150.00). Users `rid
 | 9 | PATCH `/api/metro-cards/MC-2001` | `{"isActive":false}` | 200, card deactivated |
 | 10 | PUT `/api/metro-cards/MC-2001` | `{"passengerId":"operator1","balance":400.00,"issueDate":"2026-10-29","expiryDate":"2030-10-29","isActive":true}` | 200, every field replaced |
 | 11 | PUT with `isActive` missing | | 400 "isActive is required" (this is the PUT vs PATCH difference) |
-| 12 | DELETE `/api/metro-cards/MC-2001` | none | 204 |
-| 13 | DELETE again | none | 404 |
+| 12 | POST `/api/metro-cards/MC-2001/top-up` | `{"amount":200.00}` | 200, balance increased by 200 |
+| 13 | POST `/api/metro-cards/MC-2001/top-up` | `{"amount":-5}` | 400 "amount must be at least 1.00" |
+| 14 | POST `/api/bookings` (switch to the **full-api** group) | `{"passengerId":"operator1","sourceStationId":"<a station ID>","destStationId":"<another>","ticketType":"SINGLE","passengerCount":1,"paymentMethod":"METRO_CARD"}` | 201, `remainingCardBalance` shows the card balance after the fare was deducted |
+| 15 | GET `/api/metro-cards/MC-2001` | none | 200, balance is lower by exactly the fare |
+| 16 | Repeat step 14 until the balance is too low | same | 400 "Insufficient metro card balance..." and the balance is unchanged |
+| 17 | DELETE `/api/metro-cards/MC-2001` | none | 204 |
+| 18 | DELETE again | none | 404 |
 
-Use `operator1` for steps 4-12 because `rider1` and `rider2` already hold an active card.
+Use `operator1` for steps 4-17 because `rider1` and `rider2` already hold an active card.
+
+Get real station IDs from GET `/api/stations`. Omit `paymentMethod` (or send `DEMO`) for the original simulated checkout, which doesn't touch any card.

@@ -2,6 +2,7 @@ package com.example.demo.controller;
 
 import com.example.demo.entity.Fare;
 import com.example.demo.entity.MaintenanceIssue;
+import com.example.demo.entity.MetroCard;
 import com.example.demo.entity.Payment;
 import com.example.demo.entity.Route;
 import com.example.demo.entity.RouteStation;
@@ -12,6 +13,7 @@ import com.example.demo.entity.Train;
 import com.example.demo.entity.User;
 import com.example.demo.repository.FareRepository;
 import com.example.demo.repository.MaintenanceIssueRepository;
+import com.example.demo.repository.MetroCardRepository;
 import com.example.demo.repository.PaymentRepository;
 import com.example.demo.repository.RouteRepository;
 import com.example.demo.repository.RouteStationRepository;
@@ -59,11 +61,13 @@ public class MetroController {
     private final ScheduleRepository schedules;
     private final RouteStationRepository routeStations;
     private final MaintenanceIssueRepository maintenanceIssues;
+    private final MetroCardRepository metroCards;
 
     public MetroController(UserRepository users, StationRepository stations, RouteRepository routes,
                            FareRepository fares, TicketRepository tickets, PaymentRepository payments,
                            TrainRepository trains, ScheduleRepository schedules,
-                           RouteStationRepository routeStations, MaintenanceIssueRepository maintenanceIssues) {
+                           RouteStationRepository routeStations, MaintenanceIssueRepository maintenanceIssues,
+                           MetroCardRepository metroCards) {
         this.users = users;
         this.stations = stations;
         this.routes = routes;
@@ -74,6 +78,7 @@ public class MetroController {
         this.schedules = schedules;
         this.routeStations = routeStations;
         this.maintenanceIssues = maintenanceIssues;
+        this.metroCards = metroCards;
     }
 
     @PostMapping("/auth/signin")
@@ -100,8 +105,8 @@ public class MetroController {
         return users.save(user);
     }
 
-    /** One transactional demo checkout: validate the journey, calculate the fare on the server,
-     *  and persist the ticket and its simulated payment together. */
+    /** One transactional checkout: validate the journey, calculate the fare on the server, optionally charge the
+     *  passenger's metro card, and persist the ticket and its payment together (all or nothing). */
     @PostMapping("/bookings")
     @ResponseStatus(HttpStatus.CREATED)
     @Transactional
@@ -120,6 +125,10 @@ public class MetroController {
         String ticketType = request.ticketType() == null ? "SINGLE" : request.ticketType().trim().toUpperCase();
         if (!Set.of("SINGLE", "RETURN", "DAY_PASS").contains(ticketType)) {
             throw badRequest("Choose a valid ticket type.");
+        }
+        String paymentMethod = blank(request.paymentMethod()) ? "DEMO" : request.paymentMethod().trim().toUpperCase();
+        if (!Set.of("DEMO", "METRO_CARD").contains(paymentMethod)) {
+            throw badRequest("Payment method must be DEMO or METRO_CARD.");
         }
 
         User passenger = users.findById(request.passengerId())
@@ -166,6 +175,25 @@ public class MetroController {
         BigDecimal total = unitFare.multiply(BigDecimal.valueOf(passengerCount)).setScale(2, java.math.RoundingMode.HALF_UP);
         LocalDateTime now = LocalDateTime.now();
 
+        MetroCard payingCard = null;
+        if ("METRO_CARD".equals(paymentMethod)) {
+            List<MetroCard> activeCards = metroCards.findActiveCardsForUpdate(passenger.userId);
+            if (activeCards.isEmpty()) {
+                throw badRequest("This passenger has no active metro card. Pay with the demo checkout or ask an admin to issue a card.");
+            }
+            payingCard = activeCards.get(0);
+            if (payingCard.expiryDate != null && payingCard.expiryDate.isBefore(LocalDate.now())) {
+                throw badRequest("Metro card " + payingCard.cardId + " expired on " + payingCard.expiryDate + ".");
+            }
+            BigDecimal available = payingCard.balance == null ? BigDecimal.ZERO : payingCard.balance;
+            if (available.compareTo(total) < 0) {
+                throw badRequest("Insufficient metro card balance: " + available.setScale(2, java.math.RoundingMode.HALF_UP)
+                        + " available, " + total + " needed. Top up the card and try again.");
+            }
+            payingCard.balance = available.subtract(total);
+            metroCards.save(payingCard);
+        }
+
         Ticket ticket = new Ticket();
         ticket.ticketId = uniqueId("T-", tickets::existsById);
         ticket.passengerId = passenger.userId;
@@ -189,8 +217,10 @@ public class MetroController {
         payment.ticketId = savedTicket.ticketId;
         payment.amount = total;
         payment.createdAt = now;
+        payment.paymentMethod = paymentMethod;
+        payment.metroCardId = payingCard == null ? null : payingCard.cardId;
         Payment savedPayment = payments.save(payment);
-        return new BookingResult(savedTicket, savedPayment, total);
+        return new BookingResult(savedTicket, savedPayment, total, payingCard == null ? null : payingCard.balance);
     }
 
     private boolean blank(String value) { return value == null || value.isBlank(); }
@@ -269,9 +299,27 @@ public class MetroController {
         return tickets.findByPassengerId(id);
     }
 
+    /** Creating something with an ID that already exists would silently overwrite it, so refuse with 409. */
+    private static void requireNewId(boolean exists, String label) {
+        if (exists) throw new ResponseStatusException(HttpStatus.CONFLICT, label + " ID already exists");
+    }
+
     @GetMapping("/users") public List<User> users() { return users.findAll(); }
     @PostMapping("/users") @ResponseStatus(HttpStatus.CREATED)
-    public User createUser(@RequestBody User user) { return users.save(user); }
+    public User createUser(@RequestBody User user) {
+        if (user.userId == null || user.userId.isBlank() || user.password == null || user.password.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "User ID and password are required");
+        }
+        if (users.existsById(user.userId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User ID already exists");
+        }
+        user.role = user.role == null || user.role.isBlank() ? "USER" : user.role.toUpperCase();
+        if (!user.role.equals("USER") && !user.role.equals("ADMIN")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Role must be USER or ADMIN");
+        }
+        user.registrationDate = user.registrationDate == null ? LocalDate.now() : user.registrationDate;
+        return users.save(user);
+    }
     @PutMapping("/users/{id}")
     public User updateUser(@PathVariable String id, @RequestBody User user) {
         User existing = users.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
@@ -291,21 +339,30 @@ public class MetroController {
 
     @GetMapping("/stations") public List<Station> stations() { return stations.findAll(); }
     @PostMapping("/stations") @ResponseStatus(HttpStatus.CREATED)
-    public Station createStation(@RequestBody Station station) { return stations.save(station); }
+    public Station createStation(@RequestBody Station station) {
+        requireNewId(stations.existsById(station.stationId), "Station");
+        return stations.save(station);
+    }
     @PutMapping("/stations/{id}") public Station updateStation(@PathVariable String id, @RequestBody Station station) { station.stationId = id; return stations.save(station); }
     @DeleteMapping("/stations/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteStation(@PathVariable String id) { stations.deleteById(id); }
 
     @GetMapping("/routes") public List<Route> routes() { return routes.findAll(); }
     @PostMapping("/routes") @ResponseStatus(HttpStatus.CREATED)
-    public Route createRoute(@RequestBody Route route) { return routes.save(route); }
+    public Route createRoute(@RequestBody Route route) {
+        requireNewId(routes.existsById(route.routeId), "Route");
+        return routes.save(route);
+    }
     @PutMapping("/routes/{id}") public Route updateRoute(@PathVariable String id, @RequestBody Route route) { route.routeId = id; return routes.save(route); }
     @DeleteMapping("/routes/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteRoute(@PathVariable String id) { routes.deleteById(id); }
 
     @GetMapping("/fares") public List<Fare> fares() { return fares.findAll(); }
     @PostMapping("/fares") @ResponseStatus(HttpStatus.CREATED)
-    public Fare createFare(@RequestBody Fare fare) { return fares.save(fare); }
+    public Fare createFare(@RequestBody Fare fare) {
+        requireNewId(fares.existsById(fare.fareId), "Fare");
+        return fares.save(fare);
+    }
     @PutMapping("/fares/{id}") public Fare updateFare(@PathVariable String id, @RequestBody Fare fare) { fare.fareId = id; return fares.save(fare); }
     @DeleteMapping("/fares/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteFare(@PathVariable String id) { fares.deleteById(id); }
@@ -327,14 +384,20 @@ public class MetroController {
 
     @GetMapping("/trains") public List<Train> trains() { return trains.findAll(); }
     @PostMapping("/trains") @ResponseStatus(HttpStatus.CREATED)
-    public Train createTrain(@RequestBody Train train) { return trains.save(train); }
+    public Train createTrain(@RequestBody Train train) {
+        requireNewId(trains.existsById(train.trainId), "Train");
+        return trains.save(train);
+    }
     @PutMapping("/trains/{id}") public Train updateTrain(@PathVariable String id, @RequestBody Train train) { train.trainId = id; return trains.save(train); }
     @DeleteMapping("/trains/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteTrain(@PathVariable String id) { trains.deleteById(id); }
 
     @GetMapping("/schedules") public List<Schedule> schedules() { return schedules.findAll(); }
     @PostMapping("/schedules") @ResponseStatus(HttpStatus.CREATED)
-    public Schedule createSchedule(@RequestBody Schedule schedule) { return schedules.save(schedule); }
+    public Schedule createSchedule(@RequestBody Schedule schedule) {
+        requireNewId(schedules.existsById(schedule.scheduleId), "Schedule");
+        return schedules.save(schedule);
+    }
     @PutMapping("/schedules/{id}") public Schedule updateSchedule(@PathVariable String id, @RequestBody Schedule schedule) { schedule.scheduleId = id; return schedules.save(schedule); }
     @DeleteMapping("/schedules/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteSchedule(@PathVariable String id) { schedules.deleteById(id); }
@@ -402,15 +465,20 @@ public class MetroController {
 
     @GetMapping("/maintenance-issues") public List<MaintenanceIssue> maintenanceIssues() { return maintenanceIssues.findAll(); }
     @PostMapping("/maintenance-issues") @ResponseStatus(HttpStatus.CREATED)
-    public MaintenanceIssue createMaintenanceIssue(@RequestBody MaintenanceIssue issue) { return maintenanceIssues.save(issue); }
+    public MaintenanceIssue createMaintenanceIssue(@RequestBody MaintenanceIssue issue) {
+        requireNewId(maintenanceIssues.existsById(issue.issueId), "Maintenance issue");
+        return maintenanceIssues.save(issue);
+    }
     @PutMapping("/maintenance-issues/{id}") public MaintenanceIssue updateMaintenanceIssue(@PathVariable String id, @RequestBody MaintenanceIssue issue) { issue.issueId = id; return maintenanceIssues.save(issue); }
     @DeleteMapping("/maintenance-issues/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteMaintenanceIssue(@PathVariable String id) { maintenanceIssues.deleteById(id); }
 
     public record LoginRequest(String userId, String password) {}
+    /** paymentMethod is optional: DEMO (default, simulated checkout) or METRO_CARD (charges the passenger's active card). */
     public record BookingRequest(String passengerId, String sourceStationId, String destStationId,
-                                 String ticketType, Integer passengerCount) {}
-    public record BookingResult(Ticket ticket, Payment payment, BigDecimal amount) {}
+                                 String ticketType, Integer passengerCount, String paymentMethod) {}
+    /** remainingCardBalance is only set when the ticket was paid with a metro card. */
+    public record BookingResult(Ticket ticket, Payment payment, BigDecimal amount, BigDecimal remainingCardBalance) {}
     public record RouteStopRequest(String stationId, Integer sequenceNumber) {}
     private record PathEdge(String fromStationId, String toStationId, String routeId) {}
 }

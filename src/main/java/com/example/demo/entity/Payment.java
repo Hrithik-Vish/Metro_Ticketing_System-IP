@@ -13,4 +13,8 @@ public class Payment {
     public String ticketId;
     public BigDecimal amount;
     public LocalDateTime createdAt;
+    /** DEMO (simulated checkout) or METRO_CARD; null on rows created before this field existed. */
+    public String paymentMethod;
+    /** The card that paid, when paymentMethod is METRO_CARD. */
+    public String metroCardId;
 }

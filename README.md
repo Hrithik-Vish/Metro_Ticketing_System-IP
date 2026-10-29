@@ -786,6 +786,7 @@ POST   /api/metro-cards
 PUT    /api/metro-cards/{id}      (full replace)
 PATCH  /api/metro-cards/{id}      (partial update)
 DELETE /api/metro-cards/{id}
+POST   /api/metro-cards/{id}/top-up   (add money to a card)
 ```
 
 ### Maintenance Issues
