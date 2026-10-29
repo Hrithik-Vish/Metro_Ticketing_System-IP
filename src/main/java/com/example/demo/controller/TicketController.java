@@ -5,15 +5,19 @@ import static com.example.demo.exception.Errors.requireFound;
 import static com.example.demo.exception.Errors.requireId;
 import static com.example.demo.exception.Errors.requireNewId;
 
+import com.example.demo.entity.MetroCardTransaction;
 import com.example.demo.entity.Payment;
 import com.example.demo.entity.Ticket;
 import com.example.demo.repository.MetroCardRepository;
+import com.example.demo.repository.MetroCardTransactionRepository;
 import com.example.demo.repository.PaymentRepository;
 import com.example.demo.repository.TicketRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -34,11 +38,14 @@ public class TicketController {
     private final TicketRepository tickets;
     private final PaymentRepository payments;
     private final MetroCardRepository metroCards;
+    private final MetroCardTransactionRepository transactions;
 
-    public TicketController(TicketRepository tickets, PaymentRepository payments, MetroCardRepository metroCards) {
+    public TicketController(TicketRepository tickets, PaymentRepository payments, MetroCardRepository metroCards,
+                            MetroCardTransactionRepository transactions) {
         this.tickets = tickets;
         this.payments = payments;
         this.metroCards = metroCards;
+        this.transactions = transactions;
     }
 
     @GetMapping
@@ -80,6 +87,15 @@ public class TicketController {
                         BigDecimal current = card.balance == null ? BigDecimal.ZERO : card.balance;
                         card.balance = current.add(payment.amount);
                         metroCards.save(card);
+                        MetroCardTransaction tx = new MetroCardTransaction();
+                        tx.transactionId = "MT-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase();
+                        tx.cardId = card.cardId;
+                        tx.transactionType = "REFUND";
+                        tx.description = "Refund for ticket " + id;
+                        tx.amount = payment.amount;
+                        tx.balanceAfter = card.balance;
+                        tx.createdAt = LocalDateTime.now();
+                        transactions.save(tx);
                     });
                 }
             }

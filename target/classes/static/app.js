@@ -1,1189 +1,3 @@
-/* ============================================================
-   MetroPass — frontend logic
-   Talks to the Spring Boot API under /api, including transactional
-   booking and ordered route-stop operations.
-============================================================ */
-
-const state = {
-  currentUser: JSON.parse(localStorage.getItem('metroUser') || 'null'),
-  users: [],
-  stations: [],
-  routes: [],
-  fares: [],
-  tickets: [],
-  payments: [],
-  trains: [],
-  schedules: [],
-  metroCards: [],
-  routeStations: [],
-  maintenanceIssues: [],
-  bookingStep: 1,
-  bookingDraft: null,
-  networkSelection: {}
-};
-
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
-
-/* ---------------- Theme ---------------- */
-function currentTheme() {
-  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
-}
-function setTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
-  try { localStorage.setItem('metroTheme', theme); } catch (e) {}
-}
-function toggleTheme() {
-  setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
-}
-
-/* ---------------- Metro scene (moving background) ---------------- */
-function seedSceneStars() {
-  const host = $('#scene-stars');
-  if (!host || host.dataset.seeded) return;
-  host.dataset.seeded = '1';
-  const frag = document.createDocumentFragment();
-  for (let i = 0; i < 50; i++) {
-    const star = document.createElement('span');
-    star.className = 'scene-star';
-    star.style.left = `${Math.random() * 100}%`;
-    star.style.top = `${Math.random() * 55}%`;
-    star.style.animationDelay = `${(Math.random() * 5).toFixed(2)}s`;
-    frag.appendChild(star);
-  }
-  host.appendChild(frag);
-}
-function applyScenePerformanceTier() {
-  const scene = $('#metro-scene');
-  if (!scene) return;
-  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const narrow = window.matchMedia && window.matchMedia('(max-width: 640px)').matches;
-  scene.setAttribute('data-tier', reduced ? 'off' : narrow ? 'medium' : 'high');
-}
-
-/* Scroll parallax: distant scene layers drift opposite the scroll direction,
-   each at its own --depth, so the world feels like it has spatial depth
-   rather than being a flat looping strip. Skipped entirely under reduced
-   motion or the "off" performance tier. */
-let sceneParallaxLayers = null;
-let sceneParallaxTicking = false;
-function updateSceneParallax() {
-  sceneParallaxTicking = false;
-  const scene = $('#metro-scene');
-  if (!scene || scene.getAttribute('data-tier') === 'off') return;
-  if (!sceneParallaxLayers) sceneParallaxLayers = $$('.scene-parallax');
-  const y = window.scrollY || window.pageYOffset || 0;
-  sceneParallaxLayers.forEach((layer) => {
-    const depth = parseFloat(layer.dataset.depth || '0');
-    layer.style.setProperty('--parallax-shift', `${(y * depth).toFixed(1)}px`);
-  });
-}
-function onSceneScroll() {
-  if (sceneParallaxTicking) return;
-  sceneParallaxTicking = true;
-  requestAnimationFrame(updateSceneParallax);
-}
-const SCENE_DIM_BY_VIEW = { book: 1.5, network: 1.5, tickets: 1.9, card: 1.9, profile: 1.9 };
-function setSceneView(view) {
-  const workspace = $('.workspace');
-  if (workspace) workspace.setAttribute('data-scene-view', view || 'dashboard');
-  const scene = $('#metro-scene');
-  if (!scene) return;
-  scene.setAttribute('data-scene-view', view || 'dashboard');
-  const dim = (view || '').startsWith('admin') ? 2.4 : (SCENE_DIM_BY_VIEW[view] || 1);
-  scene.style.setProperty('--scene-dim', dim);
-}
-const resources = ['users', 'stations', 'routes', 'fares', 'tickets', 'payments'];
-const resourceEndpoints = {
-  trains: 'trains', schedules: 'schedules', metroCards: 'metro-cards',
-  maintenanceIssues: 'maintenance-issues', routeStations: 'route-stations'
-};
-const opsResources = Object.keys(resourceEndpoints);
-
-const LINE_COLORS = ['#2563EB', '#f2994a', '#27ae60', '#bb6bd9', '#e05656', '#0ea5b7'];
-
-const api = async (resource, options = {}) => {
-  const response = await fetch(`/api/${resource}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    let detail = text;
-    try {
-      const body = JSON.parse(text);
-      detail = body.message || body.detail || body.error || text;
-    } catch {}
-    throw new Error(detail || `${response.status} ${response.statusText}`);
-  }
-  return response.status === 204 ? null : response.json();
-};
-
-const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-}[char]));
-
-const isAdmin = () => state.currentUser?.role === 'ADMIN';
-const displayName = (user) => `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.userId || 'Metro user';
-const stationName = (id) => state.stations.find((station) => station.stationId === id)?.stationCode || id || 'Unknown';
-const stationById = (id) => state.stations.find((station) => station.stationId === id);
-const trainName = (id) => state.trains.find((train) => train.trainId === id)?.trainNumber || id || 'Unknown';
-const routeName = (id) => state.routes.find((route) => route.routeId === id)?.routeName || id || 'Unknown';
-const money = (value) => `₹${Number(value || 0).toFixed(2)}`;
-function parseDateValue(value) {
-  if (!value) return null;
-  if (value instanceof Date) return new Date(value.getTime());
-  const text = String(value);
-  // Java LocalDate JSON values are date-only strings. Parse them as local dates,
-  // not UTC dates (which otherwise display as the previous day in India).
-  return new Date(/^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T00:00:00` : text);
-}
-function localDateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-function localDateTimeString(date = new Date()) {
-  return `${localDateString(date)}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
-}
-function isValidDateOnly(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
-  const parsed = parseDateValue(value);
-  return Boolean(parsed && !Number.isNaN(parsed.getTime()) && localDateString(parsed) === value);
-}
-const formatDate = (value) => {
-  const date = parseDateValue(value);
-  return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
-};
-const formatTime = (value) => {
-  const date = parseDateValue(value);
-  return date && !Number.isNaN(date.getTime()) ? date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '--:--';
-};
-const ticketPool = () => isAdmin() ? state.tickets : state.tickets.filter((ticket) => ticket.passengerId === state.currentUser?.userId);
-
-function notify(message, isError = false) {
-  const toast = $('#toast');
-  if (!toast) return;
-  toast.textContent = message;
-  toast.classList.toggle('error', isError);
-  toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 3000);
-}
-
-// The demo fare table is treated as symmetric: a fare defined in either direction
-// applies in both directions unless a direction-specific row exists.
-function findFare(from, to) {
-  if (!from || !to || from === to) return null;
-  return state.fares.find((fare) => fare.sourceStationId === from && fare.destStationId === to)
-    || state.fares.find((fare) => fare.sourceStationId === to && fare.destStationId === from);
-}
-
-function fareForJourney(from, to, path = pathBetween(from, to)) {
-  if (!path) return null;
-  const directFare = findFare(from, to);
-  if (directFare && Number(directFare.baseFare) > 0) {
-    return { oneWayFare: Number(directFare.baseFare), fareId: directFare.fareId, direct: true };
-  }
-  let oneWayFare = 0;
-  let fareId = null;
-  for (const edge of path.edges) {
-    const segmentFare = findFare(edge.fromStationId, edge.toStationId);
-    if (!segmentFare || !Number.isFinite(Number(segmentFare.baseFare)) || Number(segmentFare.baseFare) <= 0) return null;
-    oneWayFare += Number(segmentFare.baseFare);
-    fareId ||= segmentFare.fareId;
-  }
-  return fareId ? { oneWayFare, fareId, direct: false } : null;
-}
-
-function calculateBookingFare(from, to, type = 'SINGLE', count = 1) {
-  const path = pathBetween(from, to);
-  if (!path) return null;
-  const normalizedType = String(type || 'SINGLE').toUpperCase();
-  const fareInfo = fareForJourney(from, to, path);
-  if (!fareInfo) return null;
-  let perPassenger;
-  let label;
-  const fareId = fareInfo.fareId;
-  if (normalizedType === 'RETURN') {
-    perPassenger = fareInfo.oneWayFare * 2;
-    label = 'Return journey (2× one-way fare)';
-  } else if (normalizedType === 'DAY_PASS') {
-    perPassenger = fareInfo.oneWayFare * 3;
-    label = 'Day pass (3× one-way fare)';
-  } else if (normalizedType === 'SINGLE') {
-    perPassenger = fareInfo.oneWayFare;
-    label = 'Single journey';
-  } else {
-    return null;
-  }
-  const passengerCount = Number(count || 1);
-  if (!Number.isInteger(passengerCount) || passengerCount < 1 || passengerCount > 4) return null;
-  return {
-    path,
-    fareId,
-    oneWayFare: fareInfo?.oneWayFare ?? null,
-    perPassenger,
-    passengerCount,
-    total: Math.round((perPassenger * passengerCount + Number.EPSILON) * 100) / 100,
-    label,
-    isEstimatedFromSegments: Boolean(fareInfo && !fareInfo.direct)
-  };
-}
-
-function ticketValidityLabel(type) {
-  if (type === 'RETURN') return 'Valid for 24 hours';
-  if (type === 'DAY_PASS') return 'Valid until the end of today';
-  return 'Valid for 2 hours';
-}
-
-function ticketExpiry(type, now = new Date()) {
-  const expiry = new Date(now.getTime());
-  if (type === 'RETURN') expiry.setHours(expiry.getHours() + 24);
-  else if (type === 'DAY_PASS') expiry.setHours(23, 59, 59, 0);
-  else expiry.setHours(expiry.getHours() + 2);
-  return localDateTimeString(expiry);
-}
-
-function lineColorFor(routeId, index) {
-  const route = state.routes.find((r) => r.routeId === routeId);
-  return route?.lineColor || LINE_COLORS[index % LINE_COLORS.length];
-}
-
-function estimateStops(from, to) {
-  const path = pathBetween(from, to);
-  if (!path) return { count: null, minutes: null };
-  let minutes = 0;
-  for (const leg of path.legs) {
-    const route = state.routes.find((candidate) => candidate.routeId === leg.routeId);
-    const allStops = state.routeStations.filter((item) => item.routeId === leg.routeId)
-      .sort((a, b) => Number(a.sequenceNumber || 0) - Number(b.sequenceNumber || 0));
-    const edgeCount = Math.max(allStops.length - 1, 1);
-    const legEdges = Math.max(leg.stationIds.length - 1, 0);
-    minutes += (Number(route?.estimatedTime) || 0) * (legEdges / edgeCount);
-  }
-  return { count: path.stationIds.length, minutes: minutes > 0 ? Math.max(1, Math.round(minutes)) : null };
-}
-
-/* ---------------- QR-style code (visual only, canvas-drawn) ---------------- */
-function drawTicketQr(canvas, seedText) {
-  if (!canvas) return;
-  const size = 21;
-  const ctx = canvas.getContext('2d');
-  canvas.width = size; canvas.height = size;
-  let seed = 0;
-  for (let i = 0; i < seedText.length; i++) seed = (seed * 31 + seedText.charCodeAt(i)) >>> 0;
-  const rand = () => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 8) / 16777216; };
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, size, size);
-  ctx.fillStyle = '#0B1220';
-  const drawFinder = (x, y) => {
-    ctx.fillRect(x, y, 7, 7);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(x + 1, y + 1, 5, 5);
-    ctx.fillStyle = '#0B1220';
-    ctx.fillRect(x + 2, y + 2, 3, 3);
-  };
-  drawFinder(0, 0);
-  drawFinder(size - 7, 0);
-  drawFinder(0, size - 7);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const inFinderZone = (x < 8 && y < 8) || (x > size - 9 && y < 8) || (x < 8 && y > size - 9);
-      if (inFinderZone) continue;
-      if (rand() > 0.56) ctx.fillRect(x, y, 1, 1);
-    }
-  }
-}
-
-/* ---------------- Ticket card renderer ---------------- */
-function ticketStatus(ticket) {
-  if (ticket.isUsed) return 'used';
-  if (ticket.validUntil && new Date(ticket.validUntil) <= new Date()) return 'expired';
-  return 'active';
-}
-
-function ticketCardHtml(ticket, { compact = false } = {}) {
-  const status = ticketStatus(ticket);
-  const statusLabel = status === 'active' ? 'ACTIVE' : status === 'used' ? 'USED' : 'EXPIRED';
-  const fare = state.fares.find((f) => f.fareId === ticket.fareId);
-  const payment = state.payments.find((p) => p.ticketId === ticket.ticketId);
-  const amount = payment?.amount ?? fare?.baseFare ?? 0;
-  const passengers = Number(ticket.passengerCount || ticket._passengerCount || 1);
-  const canvasId = `qr-${ticket.ticketId}-${Math.random().toString(36).slice(2, 7)}`;
-  return `
-    <div class="metro-ticket" data-ticket-card="${escapeHtml(ticket.ticketId)}">
-      <div class="metro-ticket-head">
-        <span class="metro-ticket-brand">METROPASS</span>
-        <span class="metro-ticket-type">${escapeHtml(ticket.ticketType || 'SINGLE')}</span>
-      </div>
-      <div class="metro-ticket-route">
-        <strong>${escapeHtml(stationName(ticket.sourceStationId)).toUpperCase()}</strong>
-        <span class="route-arrow">→</span>
-        <strong>${escapeHtml(stationName(ticket.destStationId)).toUpperCase()}</strong>
-      </div>
-      <div class="metro-ticket-times">
-        <span>${formatTime(ticket.issueTime || ticket.createdAt)}</span>
-        <span>·</span>
-        <span>${formatDate(ticket.issueTime || ticket.createdAt)}</span>
-      </div>
-      <hr class="metro-ticket-divider">
-      <div class="metro-ticket-body">
-        <div class="metro-ticket-meta">
-          <span class="metro-ticket-fare">${money(amount)}</span>
-          <span class="metro-ticket-pax">${passengers} Passenger${passengers > 1 ? 's' : ''}</span>
-          <span class="metro-ticket-id">Ticket #${escapeHtml(ticket.ticketId)}</span>
-        </div>
-        <div class="metro-ticket-qr${status === 'active' ? ' metro-ticket-qr-active' : ''}">
-          <canvas id="${canvasId}"></canvas>
-          ${status === 'active' ? '<span class="qr-scan-line" aria-hidden="true"></span>' : ''}
-        </div>
-      </div>
-      <div class="metro-ticket-status-row">
-        <span class="metro-ticket-status ${status}">${statusLabel}</span>
-        ${compact ? '' : `<div class="metro-ticket-actions">
-          <button type="button" data-ticket-download="${escapeHtml(ticket.ticketId)}">Download</button>
-          ${status === 'active' && (isAdmin() || ticket.passengerId === state.currentUser?.userId) ? `<button type="button" data-ticket-cancel="${escapeHtml(ticket.ticketId)}">Cancel</button>` : ''}
-        </div>`}
-      </div>
-    </div>
-  `;
-}
-
-function mountTicketCanvases(container) {
-  container.querySelectorAll('[data-ticket-card]').forEach((card) => {
-    const canvas = card.querySelector('canvas');
-    const ticketId = card.dataset.ticketCard;
-    if (canvas) drawTicketQr(canvas, ticketId);
-  });
-  container.querySelectorAll('[data-ticket-cancel]').forEach((button) => {
-    button.addEventListener('click', () => cancelTicket(button.dataset.ticketCancel));
-  });
-  container.querySelectorAll('[data-ticket-download]').forEach((button) => {
-    button.addEventListener('click', () => downloadTicket(button.dataset.ticketDownload));
-  });
-}
-
-function downloadTicket(ticketId) {
-  const ticket = state.tickets.find((item) => item.ticketId === ticketId);
-  if (!ticket) { notify('Ticket could not be found.', true); return; }
-  const payment = state.payments.find((item) => item.ticketId === ticketId);
-  const fare = state.fares.find((item) => item.fareId === ticket.fareId);
-  const amount = payment ? Number(payment.amount) : Number(fare?.baseFare || 0);
-  const details = [
-    ['Ticket ID', ticket.ticketId],
-    ['Passenger ID', ticket.passengerId],
-    ['Journey', `${stationName(ticket.sourceStationId)} → ${stationName(ticket.destStationId)}`],
-    ['Ticket type', ticket.ticketType || 'SINGLE'],
-    ['Passengers', Number(ticket.passengerCount || ticket._passengerCount || 1)],
-    ['Amount', money(amount)],
-    ['Issued', `${formatDate(ticket.issueTime || ticket.createdAt)} ${formatTime(ticket.issueTime || ticket.createdAt)}`],
-    ['Valid until', `${formatDate(ticket.validUntil)} ${formatTime(ticket.validUntil)}`],
-    ['Status', ticketStatus(ticket).toUpperCase()]
-  ];
-  const rows = details.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`).join('');
-  const documentHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MetroPass ${escapeHtml(ticket.ticketId)}</title><style>body{font:16px/1.5 Arial,sans-serif;background:#f3f5f8;color:#152033;padding:24px}main{max-width:680px;margin:auto;background:white;border:1px solid #dce2eb;border-radius:16px;padding:28px}h1{margin:0 0 4px;color:#155eef}p{color:#53627a}table{width:100%;border-collapse:collapse;margin:24px 0}th,td{text-align:left;padding:12px;border-bottom:1px solid #e5e9f0}th{width:35%;color:#53627a}small{color:#64748b}@media print{body{background:white;padding:0}main{border:0;max-width:none}}</style></head><body><main><h1>MetroPass</h1><p>Digital metro ticket · ${escapeHtml(ticket.ticketId)}</p><table>${rows}</table><small>Academic project demo ticket. The visual ticket pattern is illustrative and is not a scannable transit credential.</small><p><button onclick="window.print()">Print / Save as PDF</button></p></main></body></html>`;
-  const blob = new Blob([documentHtml], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `${ticket.ticketId}.html`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  // Keep the object URL alive long enough for browsers to begin the download.
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  notify('Ticket downloaded. Open it in a browser to print or save as PDF.');
-}
-
-/* ---------------- Selects ---------------- */
-function fillSelect(selector, items, valueKey, labelFn, placeholder = 'Select') {
-  const select = $(selector);
-  if (!select) return;
-  const current = select.value;
-  select.innerHTML = `<option value="">${placeholder}</option>` + items.map((item) => (
-    `<option value="${escapeHtml(item[valueKey])}">${escapeHtml(labelFn(item))}</option>`
-  )).join('');
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
-}
-
-function populateSelects() {
-  const activeStations = state.stations.filter((station) => station.isActive !== false);
-  const stationLabel = (station) => station.stationCode || station.stationId;
-  fillSelect('#journey-from', activeStations, 'stationId', stationLabel, 'Select station');
-  fillSelect('#journey-to', activeStations, 'stationId', stationLabel, 'Select station');
-  fillSelect('#booking-from', activeStations, 'stationId', stationLabel, 'Select station');
-  fillSelect('#booking-to', activeStations, 'stationId', stationLabel, 'Select station');
-  fillSelect('#admin-fare-from', activeStations, 'stationId', stationLabel, 'From station');
-  fillSelect('#admin-fare-to', activeStations, 'stationId', stationLabel, 'To station');
-  fillSelect('#booking-passenger', state.users.filter((user) => user.role !== 'ADMIN' && user.isActive !== false), 'userId', displayName, 'Passenger');
-  fillSelect('#schedule-train', state.trains.filter((train) => train.isActive !== false), 'trainId', (train) => train.trainNumber || train.trainId, 'Train');
-  fillSelect('#schedule-route', state.routes, 'routeId', (route) => route.routeName || route.routeId, 'Route');
-  fillSelect('#route-start', activeStations, 'stationId', stationLabel, 'Start station');
-  fillSelect('#route-end', activeStations, 'stationId', stationLabel, 'End station');
-  fillSelect('#route-station-route', state.routes, 'routeId', (route) => route.routeName || route.routeId, 'Route');
-  fillSelect('#route-station-station', activeStations, 'stationId', stationLabel, 'Station');
-  fillSelect('#metrocard-passenger', state.users.filter((user) => user.role !== 'ADMIN' && user.isActive !== false), 'userId', displayName, 'Passenger');
-  fillSelect('#maintenance-train', state.trains, 'trainId', (train) => train.trainNumber || train.trainId, 'Train (optional)');
-  fillSelect('#maintenance-station', activeStations, 'stationId', stationLabel, 'Station (optional)');
-}
-
-/* ---------------- Navigation ---------------- */
-const PASSENGER_NAV = [
-  { view: 'dashboard', label: 'Home', icon: '🏠' },
-  { view: 'book', label: 'Book Ticket', icon: '🎫' },
-  { view: 'tickets', label: 'My Tickets', icon: '🎟' },
-  { view: 'network', label: 'Network', icon: '🗺' },
-  { view: 'card', label: 'Metro Card', icon: '💳' },
-  { view: 'profile', label: 'Profile', icon: '👤' }
-];
-
-const ADMIN_NAV = [
-  { group: 'Overview' },
-  { view: 'admin-dashboard', label: 'Dashboard', icon: '📊' },
-  { group: 'Network' },
-  { view: 'admin-stations', label: 'Stations', icon: '📍' },
-  { view: 'admin-routes', label: 'Routes', icon: '🛤' },
-  { view: 'admin-trains', label: 'Trains', icon: '🚆' },
-  { view: 'admin-schedules', label: 'Schedules', icon: '🗓' },
-  { group: 'Ticketing' },
-  { view: 'book', label: 'Issue Ticket', icon: '🎫' },
-  { view: 'admin-tickets', label: 'Tickets', icon: '🎫' },
-  { view: 'admin-payments', label: 'Payments', icon: '💰' },
-  { view: 'admin-fares', label: 'Fares', icon: '🧾' },
-  { view: 'admin-cards', label: 'Metro Cards', icon: '💳' },
-  { group: 'Management' },
-  { view: 'admin-users', label: 'Users', icon: '👥' },
-  { view: 'admin-maintenance', label: 'Maintenance', icon: '🛠' }
-];
-
-function navItems() { return isAdmin() ? ADMIN_NAV : PASSENGER_NAV; }
-function allowedViews() { return navItems().filter((item) => item.view).map((item) => item.view); }
-
-function renderNav() {
-  $('#nav-list').innerHTML = navItems().map((item) => item.group
-    ? `<p class="nav-group-label">${escapeHtml(item.group)}</p>`
-    : `<a class="nav-item" href="#${item.view}" data-view="${item.view}"><span class="nav-icon">${item.icon}</span><span>${escapeHtml(item.label)}</span></a>`
-  ).join('');
-  $$('.nav-item').forEach((item) => item.addEventListener('click', (event) => {
-    event.preventDefault();
-    navigate(item.dataset.view);
-    closeSidebar();
-  }));
-}
-
-function setupShell() {
-  const signedIn = Boolean(state.currentUser);
-  $('#auth-screen').classList.toggle('hidden', signedIn);
-  $('#app-shell').classList.toggle('hidden', !signedIn);
-  // The auth screen always shows the night scene for contrast against its
-  // white sign-in copy; once inside the app, the scene follows the theme.
-  document.documentElement.setAttribute('data-scene-day', signedIn ? '1' : '0');
-  if (!signedIn) return;
-
-  $('#account-name').textContent = displayName(state.currentUser);
-  $('#account-id').textContent = state.currentUser.userId;
-  $('#account-role').textContent = isAdmin() ? 'Admin' : 'Passenger';
-  $('#today-label').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  $('#quick-book-label').textContent = isAdmin() ? 'Issue ticket' : 'Book a ticket';
-  $('#quick-book-button').classList.remove('hidden');
-  $('#booking-passenger-wrap').classList.toggle('hidden', !isAdmin());
-
-  renderNav();
-}
-
-/* ---------------- Dashboard ---------------- */
-function renderJourneyCard() {
-  const from = $('#journey-from').value;
-  const to = $('#journey-to').value;
-  const summary = $('#journey-summary');
-  const submit = $('#journey-submit');
-  if (from && to && from !== to) {
-    summary.hidden = false;
-    $('#journey-summary-from').textContent = stationName(from);
-    $('#journey-summary-to').textContent = stationName(to);
-    const count = Number($('#journey-passengers').value || 1);
-    const type = $('#journey-type').value || 'SINGLE';
-    const pricing = calculateBookingFare(from, to, type, count);
-    const estimate = estimateStops(from, to);
-    $('#journey-summary-fare').textContent = pricing ? money(pricing.total) : (estimate.count ? 'Fare not set' : 'No connected route');
-    $('#journey-summary-time').textContent = estimate.minutes ? `${estimate.minutes} min` : '—';
-    $('#journey-summary-stops').textContent = estimate.count ?? '—';
-    submit.disabled = !pricing;
-    submit.querySelector('span').textContent = pricing ? 'BUY TICKET →' : (estimate.count ? 'Fare not configured' : 'No connected route');
-  } else {
-    summary.hidden = true;
-    submit.disabled = true;
-    submit.querySelector('span').textContent = from === to && from ? 'Choose two different stations' : 'Select a journey';
-  }
-}
-
-function renderStats() {
-  const tickets = ticketPool();
-  const revenue = state.payments
-    .filter((payment) => tickets.some((ticket) => ticket.ticketId === payment.ticketId))
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-  const myCard = state.metroCards.find((card) => card.passengerId === state.currentUser?.userId);
-  const stats = [
-    ['Active tickets', tickets.filter((t) => ticketStatus(t) === 'active').length],
-    ['Total tickets', tickets.length],
-    ['Metro card balance', myCard ? money(myCard.balance) : '—'],
-    ['Total spent', money(revenue)]
-  ];
-  $('#stats-grid').innerHTML = stats.map(([label, value], i) => (
-    `<article class="stat-card${i === 0 ? ' accent' : ''}"><span>${label}</span><strong>${escapeHtml(value)}</strong></article>`
-  )).join('');
-}
-
-/* Deterministic small-int hash so a route's simulated "live" reading is stable within a
-   given minute (changes as time passes) rather than jumping around on every re-render. */
-function liveSeed(routeId) {
-  const minuteBucket = Math.floor(Date.now() / 60000);
-  let seed = minuteBucket;
-  for (let i = 0; i < routeId.length; i++) seed = (seed * 31 + routeId.charCodeAt(i)) >>> 0;
-  return seed;
-}
-
-function lineStatusRows(target, { live = false } = {}) {
-  const rows = state.routes.map((route, i) => {
-    const onThisRoute = state.maintenanceIssues.some((m) => m.status !== 'RESOLVED' &&
-      state.routeStations.some((rs) => rs.routeId === route.routeId && rs.stationId === m.stationId));
-    const status = onThisRoute ? 'maintenance' : 'operational';
-    const color = route.lineColor || LINE_COLORS[i % LINE_COLORS.length];
-
-    if (!live) {
-      return `
-        <div class="line-status-row">
-          <span class="line-dot" style="background:${escapeHtml(color)}"></span>
-          <strong>${escapeHtml(route.routeName || route.routeId)}</strong>
-          <span class="status-tag ${status}">${status === 'operational' ? 'Operational' : 'Maintenance'}</span>
-        </div>`;
-    }
-
-    // Live-network reading: simulated (no live train-position feed exists), but stable
-    // within a minute and clearly not claiming to be dispatch data.
-    const seed = liveSeed(route.routeId);
-    const delayMins = status === 'maintenance' ? null : (seed % 6 === 0 ? 1 + (seed % 4) : 0);
-    const nextTrainMins = 1 + (seed % 8);
-    const bars = status === 'maintenance' ? 1 : (delayMins ? 2 : 3);
-    return `
-      <div class="live-line-row">
-        <span class="line-dot" style="background:${escapeHtml(color)}"></span>
-        <strong>${escapeHtml(route.routeName || route.routeId)}</strong>
-        <span class="live-signal" aria-hidden="true">${'●'.repeat(bars)}${'○'.repeat(3 - bars)}</span>
-        <span class="status-tag ${status === 'maintenance' ? 'maintenance' : (delayMins ? 'delayed' : 'operational')}">
-          ${status === 'maintenance' ? 'Maintenance' : delayMins ? `${delayMins} min delay` : 'On time'}
-        </span>
-      </div>`;
-  }).join('');
-  $(target).innerHTML = rows || '<p class="empty-state">No routes configured.</p>';
-}
-
-function renderNetworkStatusSummary() {
-  lineStatusRows('#network-status-list', { live: true });
-  const anyIssue = state.maintenanceIssues.some((m) => m.status !== 'RESOLVED');
-  const pill = $('#network-status-pill');
-  pill.textContent = anyIssue ? 'Some lines under maintenance' : 'All systems operational';
-  pill.classList.toggle('status-ok', !anyIssue);
-  pill.style.background = anyIssue ? 'var(--amber-soft)' : '';
-  pill.style.color = anyIssue ? 'var(--amber)' : '';
-
-  // "Next train at <station>" line — picks the nearest upcoming simulated departure.
-  const nextLine = $('#next-train-line');
-  if (nextLine) {
-    if (!state.routes.length || !state.stations.length) {
-      nextLine.textContent = '';
-    } else {
-      const best = state.routes.reduce((min, route) => {
-        const mins = 1 + (liveSeed(route.routeId) % 8);
-        return mins < min.mins ? { route, mins } : min;
-      }, { route: state.routes[0], mins: 1 + (liveSeed(state.routes[0].routeId) % 8) });
-      const stop = state.routeStations.find((rs) => rs.routeId === best.route.routeId && rs.sequenceNumber === 0)
-        || state.routeStations.find((rs) => rs.routeId === best.route.routeId);
-      const stationLabel = stop ? stationName(stop.stationId) : (best.route.routeName || best.route.routeId);
-      nextLine.textContent = `Next train at ${stationLabel} — ${best.mins} min`;
-    }
-  }
-}
-
-function renderRecent(listSelector = '#recent-list', titleSelector = '#activity-title') {
-  const titleEl = $(titleSelector);
-  if (titleEl) titleEl.textContent = isAdmin() ? 'Recent tickets' : 'My recent tickets';
-  const rows = [...ticketPool()].sort((a, b) => new Date(b.createdAt || b.issueTime) - new Date(a.createdAt || a.issueTime)).slice(0, 5);
-  $(listSelector).innerHTML = rows.length ? rows.map((ticket) => `
-    <div class="activity-row">
-      <div><strong>${escapeHtml(stationName(ticket.sourceStationId))} → ${escapeHtml(stationName(ticket.destStationId))}</strong><small>${escapeHtml(ticket.ticketId)} · ${formatDate(ticket.issueTime || ticket.createdAt)}</small></div>
-      <span class="fare-chip">${escapeHtml(ticket.ticketType || 'SINGLE')}</span>
-    </div>
-  `).join('') : '<p class="empty-state">No tickets yet — book your first journey.</p>';
-}
-
-/* ---------------- Tickets page ---------------- */
-function renderTicketsPage(filter = '') {
-  const normalized = filter.toLowerCase();
-  const pool = ticketPool();
-  const active = pool.filter((t) => ticketStatus(t) === 'active');
-  $('#active-tickets-row').innerHTML = active.length
-    ? active.map((t) => ticketCardHtml(t)).join('')
-    : '<p class="empty-state">No active tickets. Book a journey to get moving.</p>';
-  mountTicketCanvases($('#active-tickets-row'));
-
-  const rows = pool.filter((ticket) => `${ticket.ticketId} ${ticket.passengerId} ${stationName(ticket.sourceStationId)} ${stationName(ticket.destStationId)}`.toLowerCase().includes(normalized));
-  $('#ticket-count').textContent = `${rows.length} ticket${rows.length === 1 ? '' : 's'}`;
-  $$('.admin-only').forEach((element) => element.classList.toggle('hidden', !isAdmin()));
-  $('#tickets-table').innerHTML = rows.length ? rows.map((ticket) => {
-    const fare = state.fares.find((f) => f.fareId === ticket.fareId);
-    const payment = state.payments.find((p) => p.ticketId === ticket.ticketId);
-    const status = ticketStatus(ticket);
-    return `
-    <tr>
-      <td><strong>${escapeHtml(ticket.ticketId)}</strong><small>${escapeHtml(ticket.ticketType || 'SINGLE')}</small></td>
-      <td>${escapeHtml(stationName(ticket.sourceStationId))} → ${escapeHtml(stationName(ticket.destStationId))}</td>
-      <td>${formatDate(ticket.issueTime || ticket.createdAt)}</td>
-      <td>${money(payment?.amount ?? fare?.baseFare ?? 0)}</td>
-      <td><span class="badge ${status === 'active' ? 'good' : 'muted'}">${status.toUpperCase()}</span></td>
-      <td class="${isAdmin() ? '' : 'hidden'}"><button class="danger-action" type="button" data-delete-ticket="${escapeHtml(ticket.ticketId)}">Delete</button></td>
-    </tr>
-  `; }).join('') : '<tr><td colspan="6" class="empty-state">No tickets found.</td></tr>';
-  $$('[data-delete-ticket]').forEach((button) => button.addEventListener('click', () => deleteTicket(button.dataset.deleteTicket)));
-}
-
-/* ---------------- Network page ---------------- */
-function renderNetwork() {
-  $('#station-count').textContent = `${state.stations.length} stations`;
-  $('#station-list').innerHTML = state.stations.map((station) => `
-    <div class="stack-item" data-station-row="${escapeHtml(station.stationId)}" style="cursor:pointer">
-      <span class="color-dot" style="background:${escapeHtml(station.lineColor || '#2563EB')}"></span>
-      <div><strong>${escapeHtml(station.stationCode || station.stationId)}</strong><small>${escapeHtml(station.address || 'No address')} · ${station.isActive === false ? 'Closed' : 'Open'}</small></div>
-    </div>
-  `).join('') || '<p class="empty-state">No stations configured.</p>';
-  $$('[data-station-row]').forEach((row) => {
-    row.addEventListener('click', () => openStationPanel(row.dataset.stationRow));
-  });
-
-  renderNetworkSvg('#network-map');
-  renderNetworkSelectionSummary();
-}
-
-/* Routes a given station belongs to, in sequence order along each route. */
-function routesForStation(stationId) {
-  return state.routes.filter((route) =>
-    state.routeStations.some((rs) => rs.routeId === route.routeId && rs.stationId === stationId));
-}
-
-/* Shortest path across line interchanges. Adjacent stops on the same route form edges. */
-function pathBetween(from, to) {
-  if (!from || !to || from === to) return null;
-  const adjacency = new Map();
-  const addEdge = (a, b, routeId) => {
-    if (!adjacency.has(a)) adjacency.set(a, []);
-    adjacency.get(a).push({ fromStationId: a, toStationId: b, routeId });
-  };
-  state.routes.forEach((route) => {
-    const stops = state.routeStations.filter((item) => item.routeId === route.routeId)
-      .sort((a, b) => Number(a.sequenceNumber || 0) - Number(b.sequenceNumber || 0));
-    for (let index = 1; index < stops.length; index++) {
-      const a = stops[index - 1].stationId;
-      const b = stops[index].stationId;
-      if (!a || !b || a === b) continue;
-      if (stationById(a)?.isActive === false || stationById(b)?.isActive === false) continue;
-      addEdge(a, b, route.routeId);
-      addEdge(b, a, route.routeId);
-    }
-  });
-  const queue = [from];
-  const previous = new Map();
-  const visited = new Set([from]);
-  while (queue.length) {
-    const current = queue.shift();
-    if (current === to) break;
-    for (const edge of adjacency.get(current) || []) {
-      if (visited.has(edge.toStationId)) continue;
-      visited.add(edge.toStationId);
-      previous.set(edge.toStationId, edge);
-      queue.push(edge.toStationId);
-    }
-  }
-  if (!visited.has(to)) return null;
-  const edges = [];
-  let current = to;
-  while (current !== from) {
-    const edge = previous.get(current);
-    if (!edge) return null;
-    edges.push(edge);
-    current = edge.fromStationId;
-  }
-  edges.reverse();
-  const stationIds = [from, ...edges.map((edge) => edge.toStationId)];
-  const legs = [];
-  edges.forEach((edge) => {
-    const last = legs[legs.length - 1];
-    if (last && last.routeId === edge.routeId) last.stationIds.push(edge.toStationId);
-    else legs.push({ routeId: edge.routeId, stationIds: [edge.fromStationId, edge.toStationId] });
-  });
-  const routeIds = [...new Set(edges.map((edge) => edge.routeId))];
-  return { routeId: routeIds.length === 1 ? routeIds[0] : null, routeIds, stationIds, legs, edges };
-}
-
-function renderNetworkSvg(target) {
-  const container = $(target);
-  if (!container) return;
-  const width = 640, height = 360;
-  const routes = state.routes;
-
-  if (!routes.length || !state.routeStations.length) {
-    container.innerHTML = state.stations.length
-      ? `<p class="empty-state">Add routes to see the line diagram.</p>`
-      : `<p class="empty-state">No network data yet.</p>`;
-    return;
-  }
-
-  const sel = state.networkSelection || {};
-  const highlight = pathBetween(sel.from, sel.to);
-  const highlightSet = highlight ? new Set(highlight.stationIds) : null;
-
-  // Lay routes out as horizontal lanes; stations placed along each lane by sequence.
-  const laneGap = height / (routes.length + 1);
-  const stationPositions = {};
-  let svgLines = '';
-  let svgStations = '';
-
-  routes.forEach((route, i) => {
-    const stops = state.routeStations.filter((rs) => rs.routeId === route.routeId)
-      .sort((a, b) => Number(a.sequenceNumber || 0) - Number(b.sequenceNumber || 0));
-    if (!stops.length) return;
-    const y = laneGap * (i + 1);
-    const stepX = (width - 100) / Math.max(stops.length - 1, 1);
-    const color = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(route.lineColor || '')) ? route.lineColor : LINE_COLORS[i % LINE_COLORS.length];
-    const routeLegs = (highlight?.legs || []).filter((leg) => leg.routeId === route.routeId);
-    const isHighlightedRoute = routeLegs.length > 0;
-    const dimmed = Boolean(highlight && !isHighlightedRoute);
-    const points = stops.map((stop, idx) => {
-      const x = 60 + idx * stepX;
-      if (!stationPositions[stop.stationId]) stationPositions[stop.stationId] = [];
-      stationPositions[stop.stationId].push({ x, y, color, routeId: route.routeId });
-      return `${x},${y}`;
-    });
-    svgLines += `<polyline data-route="${escapeHtml(route.routeId)}" points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="${isHighlightedRoute ? 7 : 5}" stroke-linecap="round" stroke-linejoin="round" opacity="${dimmed ? 0.22 : 0.85}" class="${isHighlightedRoute ? 'network-line-active' : ''}" />`;
-    routeLegs.forEach((leg) => {
-      const segIdx = leg.stationIds.map((sid) => stops.findIndex((stop) => stop.stationId === sid)).filter((idx) => idx >= 0);
-      if (segIdx.length > 1) {
-        const segPoints = segIdx.map((idx) => `${60 + idx * stepX},${y}`);
-        svgLines += `<polyline points="${segPoints.join(' ')}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" class="network-segment-highlight" />`;
-      }
-    });
-  });
-
-  Object.entries(stationPositions).forEach(([stationId, positions]) => {
-    const station = stationById(stationId);
-    const label = station?.stationCode || stationId;
-    const closed = station?.isActive === false;
-    const onPath = highlightSet && highlightSet.has(stationId);
-    const isEndpoint = stationId === sel.from || stationId === sel.to;
-    const dimmed = highlight && !onPath;
-    positions.forEach((pos) => {
-      svgStations += `
-        <g class="network-node${onPath ? ' network-node-active' : ''}${dimmed ? ' network-node-dim' : ''}" data-station="${escapeHtml(stationId)}">
-          <circle cx="${pos.x}" cy="${pos.y}" r="${isEndpoint ? 9 : 7}" fill="${closed ? '#94a3b8' : (isEndpoint ? pos.color : 'white')}" stroke="${pos.color}" stroke-width="3.5" />
-          <text class="network-station-label" x="${pos.x}" y="${pos.y - 14}" text-anchor="middle">${escapeHtml(label)}</text>
-        </g>`;
-    });
-  });
-
-  container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Metro network diagram">${svgLines}${svgStations}</svg>`;
-  container.querySelectorAll('[data-station]').forEach((node) => {
-    node.addEventListener('click', () => openStationPanel(node.dataset.station));
-  });
-}
-
-/* ---------------- Station info panel ---------------- */
-function scheduleOffsetAtStation(schedule, stationId) {
-  if (!stationId) return 0;
-  const stops = state.routeStations.filter((item) => item.routeId === schedule.routeId)
-    .sort((a, b) => Number(a.sequenceNumber || 0) - Number(b.sequenceNumber || 0));
-  const stationIndex = stops.findIndex((item) => item.stationId === stationId);
-  if (stationIndex < 0 || stops.length < 2) return 0;
-  const scheduledStart = parseDateValue(schedule.scheduledDeparture);
-  const scheduledEnd = parseDateValue(schedule.scheduledArrival);
-  const route = state.routes.find((item) => item.routeId === schedule.routeId);
-  const scheduledDuration = scheduledStart && scheduledEnd && !Number.isNaN(scheduledStart.getTime())
-    && !Number.isNaN(scheduledEnd.getTime()) && scheduledEnd > scheduledStart
-    ? (scheduledEnd.getTime() - scheduledStart.getTime()) / 60000
-    : Number(route?.estimatedTime) || 0;
-  return Math.max(0, Math.round(scheduledDuration * stationIndex / (stops.length - 1)));
-}
-
-function nextScheduleDeparture(schedule, now = new Date(), stationId = null) {
-  if (schedule.isActive === false) return null;
-  const source = parseDateValue(schedule.scheduledDeparture);
-  if (!source || Number.isNaN(source.getTime())) return null;
-  const weekdayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-  const wantedDay = String(schedule.dayOfWeek || weekdayNames[source.getDay()]).toUpperCase();
-  const validFrom = schedule.validFrom ? parseDateValue(schedule.validFrom) : null;
-  const validTo = schedule.validTo ? parseDateValue(schedule.validTo) : null;
-  const stationOffset = scheduleOffsetAtStation(schedule, stationId);
-  for (let offset = 0; offset <= 7; offset++) {
-    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 0, 0, 0, 0);
-    if (weekdayNames[day.getDay()] !== wantedDay) continue;
-    if (validFrom && day < new Date(validFrom.getFullYear(), validFrom.getMonth(), validFrom.getDate())) continue;
-    if (validTo && day > new Date(validTo.getFullYear(), validTo.getMonth(), validTo.getDate())) continue;
-    const routeDeparture = new Date(day.getFullYear(), day.getMonth(), day.getDate(), source.getHours(), source.getMinutes(), source.getSeconds(), 0);
-    const stationDeparture = new Date(routeDeparture.getTime() + stationOffset * 60000);
-    if (stationDeparture >= now) return stationDeparture;
-  }
-  return null;
-}
-
-function openStationPanel(stationId) {
-  const station = stationById(stationId);
-  if (!station) return;
-  const lines = routesForStation(stationId);
-  const isInterchange = lines.length > 1;
-  const now = new Date();
-  const lineIds = new Set(lines.map((route) => route.routeId));
-  const scheduledOnRoute = state.schedules.filter((schedule) => lineIds.has(schedule.routeId)
-    && state.trains.some((train) => train.trainId === schedule.trainId && train.isActive !== false))
-    .map((schedule) => ({ schedule, departure: nextScheduleDeparture(schedule, now, stationId) }))
-    .filter((item) => item.departure)
-    .sort((a, b) => a.departure - b.departure)
-    .slice(0, 3);
-
-  let nextTrainsHtml;
-  if (station.isActive === false) {
-    nextTrainsHtml = '<p class="empty-state">This station is closed. No departures are available.</p>';
-  } else if (scheduledOnRoute.length) {
-    nextTrainsHtml = scheduledOnRoute.map(({ schedule, departure }) =>
-      `<div class="next-train-row"><span>${escapeHtml(routeName(schedule.routeId))} · ${escapeHtml(trainName(schedule.trainId))}</span><strong>${departure.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</strong></div>`).join('');
-  } else if (!state.schedules.some((schedule) => lineIds.has(schedule.routeId))) {
-    nextTrainsHtml = [4, 12, 20].map((mins) => {
-      const t = new Date(now.getTime() + mins * 60000);
-      return `<div class="next-train-row"><span>Est. arrival</span><strong>${formatTime(t)}</strong></div>`;
-    }).join('') + '<p class="next-train-note">Illustrative — no timetable has been configured.</p>';
-  } else {
-    nextTrainsHtml = '<p class="empty-state">No upcoming departures are available within the schedule validity period.</p>';
-  }
-
-  $('#station-panel-body').innerHTML = `
-    <div class="station-panel-head">
-      <div>
-        <h3>${escapeHtml(station.stationCode || station.stationId)}</h3>
-        <p>${escapeHtml(station.address || 'No address on file')}</p>
-      </div>
-      <button class="icon-button" type="button" id="station-panel-close" aria-label="Close">✕</button>
-    </div>
-    <div class="station-panel-lines">
-      ${lines.length ? lines.map((r) => `<span class="line-chip" style="--chip-color:${escapeHtml(r.lineColor || '#2563EB')}">${escapeHtml(r.routeName || r.routeId)}</span>`).join('') : '<span class="empty-state">Not on any route yet</span>'}
-      ${isInterchange ? '<span class="interchange-chip">🔁 Interchange</span>' : ''}
-    </div>
-    <div class="station-panel-status">${station.isActive === false ? '🔴 Closed' : '🟢 Open'}</div>
-    <div class="station-panel-trains">
-      <p class="eyebrow">Next trains</p>
-      ${nextTrainsHtml}
-    </div>
-    <div class="station-panel-actions">
-      <button class="ghost-action" type="button" id="station-panel-from">Set as source</button>
-      <button class="ghost-action" type="button" id="station-panel-to">Set as destination</button>
-      <button class="primary-action" type="button" id="station-panel-start">Start journey</button>
-    </div>
-  `;
-
-  $('#station-panel-close').addEventListener('click', closeStationPanel);
-  $('#station-panel-from').addEventListener('click', () => { setNetworkSelection({ from: stationId }); closeStationPanel(); });
-  $('#station-panel-to').addEventListener('click', () => { setNetworkSelection({ to: stationId }); closeStationPanel(); });
-  $('#station-panel-start').addEventListener('click', () => {
-    $('#journey-from').value = stationId;
-    renderJourneyCard();
-    closeStationPanel();
-    navigate('book');
-    requestAnimationFrame(() => {
-      $('#booking-from').value = stationId;
-      $('#booking-to').value = '';
-      if (isAdmin() && !$('#booking-passenger').value) {
-        $('#booking-passenger').value = state.users.find((user) => user.role !== 'ADMIN' && user.isActive !== false)?.userId || '';
-      }
-      goToBookingStep(1);
-      updateRouteRecap();
-      updateFareBreakdown();
-    });
-    notify(`${station.stationCode || stationId} set as your starting station`);
-  });
-
-  $('#station-panel').classList.add('open');
-  $('#station-panel-scrim').classList.add('show');
-}
-
-function closeStationPanel() {
-  $('#station-panel')?.classList.remove('open');
-  $('#station-panel-scrim')?.classList.remove('show');
-}
-
-function setNetworkSelection(partial) {
-  state.networkSelection = { ...(state.networkSelection || {}), ...partial };
-  renderNetworkSvg('#network-map');
-  renderNetworkSelectionSummary();
-}
-
-function clearNetworkSelection() {
-  state.networkSelection = {};
-  renderNetworkSvg('#network-map');
-  renderNetworkSelectionSummary();
-}
-
-function renderNetworkSelectionSummary() {
-  const el = $('#network-selection-summary');
-  if (!el) return;
-  const sel = state.networkSelection || {};
-  if (!sel.from && !sel.to) {
-    el.innerHTML = `<p class="empty-state">Click two stations, or use a station's panel, to preview a route here.</p>`;
-    return;
-  }
-  const path = pathBetween(sel.from, sel.to);
-  const fromLabel = sel.from ? stationName(sel.from) : 'Select a station';
-  const toLabel = sel.to ? stationName(sel.to) : 'Select a station';
-  const est = sel.from && sel.to ? estimateStops(sel.from, sel.to) : { count: null, minutes: null };
-  const pricing = sel.from && sel.to ? calculateBookingFare(sel.from, sel.to, 'SINGLE', 1) : null;
-  el.innerHTML = `
-    <div class="route-recap"><strong>${escapeHtml(fromLabel)}</strong><span class="route-arrow">→</span><strong>${escapeHtml(toLabel)}</strong></div>
-    ${sel.from && sel.to ? `
-      <div class="journey-summary-stats">
-        <div><strong>${pricing ? money(pricing.total) : '—'}</strong><span>One-way fare</span></div>
-        <div><strong>${est.minutes ? est.minutes + ' min' : '—'}</strong><span>Journey time</span></div>
-        <div><strong>${est.count ?? '—'}</strong><span>Stations</span></div>
-      </div>
-      ${path ? (path.legs.length > 1 ? `<p class="empty-state">Transfer via ${path.legs.slice(0, -1).map((leg) => escapeHtml(stationName(leg.stationIds[leg.stationIds.length - 1]))).join(' → ')}.</p>` : '') : '<p class="empty-state">No connected route exists between these stations.</p>'}
-      ${path && !pricing ? '<p class="empty-state">A fare is missing for this journey.</p>' : ''}
-      <div class="step-actions">
-        <button class="ghost-action" type="button" id="network-selection-clear">Clear</button>
-        <button class="primary-action" type="button" id="network-selection-book" ${path && pricing ? '' : 'disabled'}>Book this journey</button>
-      </div>` : `<div class="step-actions"><button class="ghost-action" type="button" id="network-selection-clear">Clear</button></div>`}
-  `;
-  const clearBtn = $('#network-selection-clear');
-  if (clearBtn) clearBtn.addEventListener('click', clearNetworkSelection);
-  const bookBtn = $('#network-selection-book');
-  if (bookBtn) bookBtn.addEventListener('click', () => {
-    if (!path || !pricing) return;
-    $('#journey-from').value = sel.from;
-    $('#journey-to').value = sel.to;
-    renderJourneyCard();
-    navigate('book');
-    requestAnimationFrame(() => {
-      $('#booking-from').value = sel.from;
-      $('#booking-to').value = sel.to;
-      $('#booking-type').value = 'SINGLE';
-      $('#booking-passenger-count').value = '1';
-      if (isAdmin() && !$('#booking-passenger').value) {
-        $('#booking-passenger').value = state.users.find((user) => user.role !== 'ADMIN' && user.isActive !== false)?.userId || '';
-      }
-      goToBookingStep(1);
-      updateRouteRecap();
-      updateFareBreakdown();
-      updatePaymentSummary();
-    });
-  });
-}
-
-/* ---------------- Metro card / profile ---------------- */
-function renderMetroCard() {
-  const card = state.metroCards.find((c) => c.passengerId === state.currentUser?.userId);
-  const slot = $('#metrocard-slot');
-  if (!card) {
-    slot.innerHTML = `<p class="empty-state">No metro card on file yet. Ask at any station counter to get one issued.</p>`;
-    return;
-  }
-  slot.innerHTML = `
-    <div class="wallet-card">
-      <div class="wallet-card-top"><strong>METROPASS CARD</strong><span class="wallet-chip"></span></div>
-      <p class="wallet-balance-label">Available balance</p>
-      <div class="wallet-balance">${money(card.balance)}</div>
-      <div class="wallet-card-bottom">
-        <div>Card ID<strong>${escapeHtml(card.cardId)}</strong></div>
-        <div>Expires<strong>${formatDate(card.expiryDate)}</strong></div>
-        <div>Status<strong>${card.isActive === false ? 'Inactive' : 'Active'}</strong></div>
-      </div>
-    </div>
-  `;
-}
-
-function renderProfile() {
-  const user = state.users.find((u) => u.userId === state.currentUser?.userId) || state.currentUser;
-  const rows = [
-    ['Name', displayName(user)],
-    ['User ID', user.userId],
-    ['Contact', user.contact || '—'],
-    ['Role', user.role === 'ADMIN' ? 'Admin' : 'Passenger'],
-    ['Registered', formatDate(user.registrationDate)],
-    ['Status', user.isActive === false ? 'Inactive' : 'Active']
-  ];
-  $('#profile-panel').innerHTML = rows.map(([label, value]) => `
-    <div class="profile-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
-  `).join('');
-}
-
-/* ---------------- Admin pages ---------------- */
-function renderAdminDashboard() {
-  const currentTicketIds = new Set(state.tickets.map((ticket) => ticket.ticketId));
-  const revenue = state.payments.filter((payment) => currentTicketIds.has(payment.ticketId))
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-  const stats = [
-    ['Passengers', state.users.filter((u) => u.role !== 'ADMIN').length],
-    ['Tickets issued', state.tickets.length],
-    ['Revenue', money(revenue)]
-  ];
-  $('#admin-stats-grid').innerHTML = stats.map(([label, value], i) => (
-    `<article class="stat-card${i === 2 ? ' accent' : ''}"><span>${label}</span><strong>${escapeHtml(value)}</strong></article>`
-  )).join('');
-  lineStatusRows('#admin-line-status');
-  renderRecent('#admin-recent-list', null);
-}
-
-function renderAdminStations(filter = '') {
-  const normalized = filter.toLowerCase();
-  const rows = state.stations.filter((s) => `${s.stationId} ${s.stationCode} ${s.address}`.toLowerCase().includes(normalized));
-  $('#admin-station-count').textContent = `${rows.length} station${rows.length === 1 ? '' : 's'}`;
-  $('#admin-stations-table').innerHTML = rows.length ? rows.map((station) => `
-    <tr>
-      <td><span class="color-dot" style="display:inline-block;margin-right:8px;background:${escapeHtml(station.lineColor || '#2563EB')}"></span><strong style="display:inline">${escapeHtml(station.stationCode || station.stationId)}</strong><small>${escapeHtml(station.stationId)}</small></td>
-      <td>${escapeHtml(station.address || '-')}</td>
-      <td><span style="display:inline-flex;align-items:center;gap:6px"><span class="color-dot" style="background:${escapeHtml(station.lineColor || '#2563EB')}"></span></span></td>
-      <td><span class="badge ${station.isActive === false ? 'muted' : 'good'}">${station.isActive === false ? 'Closed' : 'Open'}</span></td>
-      <td><div class="row-actions"><button class="text-action" type="button" data-admin-action="edit-station" data-id="${escapeHtml(station.stationId)}">Edit</button><button class="text-action" type="button" data-admin-action="toggle-station" data-id="${escapeHtml(station.stationId)}">${station.isActive === false ? 'Open' : 'Close'}</button><button class="danger-action" type="button" data-admin-action="delete-station" data-id="${escapeHtml(station.stationId)}">Delete</button></div></td>
-    </tr>
-  `).join('') : '<tr><td colspan="5" class="empty-state">No stations found.</td></tr>';
-}
-
-function renderAdminRoutes() {
-  $('#admin-routes-table').innerHTML = state.routes.length ? state.routes.map((route) => `
-    <tr>
-      <td><span class="color-dot" style="display:inline-block;margin-right:8px;background:${escapeHtml(route.lineColor || '#2563EB')}"></span><strong style="display:inline">${escapeHtml(route.routeName || route.routeId)}</strong></td>
-      <td>${escapeHtml(stationName(route.startStationId))} → ${escapeHtml(stationName(route.endStationId))}</td>
-      <td>${route.totalDistance ? `${route.totalDistance} km` : '-'}</td>
-      <td>${route.estimatedTime ? `${route.estimatedTime} min` : '-'}</td>
-      <td><div class="row-actions"><button class="text-action" type="button" data-admin-action="edit-route" data-id="${escapeHtml(route.routeId)}">Edit</button><button class="danger-action" type="button" data-admin-action="delete-route" data-id="${escapeHtml(route.routeId)}">Delete</button></div></td>
-    </tr>
-  `).join('') : '<tr><td colspan="5" class="empty-state">No routes configured.</td></tr>';
-}
-
-function renderAdminTickets(filter = '') {
-  const normalized = filter.toLowerCase();
-  const rows = state.tickets.filter((ticket) => `${ticket.ticketId} ${ticket.passengerId} ${stationName(ticket.sourceStationId)} ${stationName(ticket.destStationId)}`.toLowerCase().includes(normalized));
-  $('#admin-ticket-count').textContent = `${rows.length} ticket${rows.length === 1 ? '' : 's'}`;
-  $('#admin-tickets-table').innerHTML = rows.length ? rows.map((ticket) => {
-    const status = ticketStatus(ticket);
-    return `
-    <tr>
-      <td><strong>${escapeHtml(ticket.ticketId)}</strong><small>${escapeHtml(ticket.ticketType || 'SINGLE')}</small></td>
-      <td>${escapeHtml(ticket.passengerId)}</td>
-      <td>${escapeHtml(stationName(ticket.sourceStationId))} → ${escapeHtml(stationName(ticket.destStationId))}</td>
-      <td>${formatDate(ticket.issueTime || ticket.createdAt)}</td>
-      <td><span class="badge ${status === 'active' ? 'good' : 'muted'}">${status.toUpperCase()}</span></td>
-      <td><button class="danger-action" type="button" data-delete-ticket="${escapeHtml(ticket.ticketId)}">Delete</button></td>
-    </tr>
-  `; }).join('') : '<tr><td colspan="6" class="empty-state">No tickets found.</td></tr>';
-  $$('[data-delete-ticket]').forEach((button) => button.addEventListener('click', () => deleteTicket(button.dataset.deleteTicket)));
-}
-
-function renderAdminPayments() {
-  const activeTicketIds = new Set(state.tickets.map((ticket) => ticket.ticketId));
-  const rows = state.payments.filter((payment) => activeTicketIds.has(payment.ticketId))
-    .sort((a, b) => parseDateValue(b.createdAt) - parseDateValue(a.createdAt));
-  $('#payments-table').innerHTML = rows.length ? rows.map((payment) => `
-    <tr>
-      <td><strong>${escapeHtml(payment.paymentId)}</strong></td>
-      <td>${escapeHtml(payment.ticketId)}</td>
-      <td>${money(payment.amount)}</td>
-      <td>${formatDate(payment.createdAt)}</td>
-    </tr>
-  `).join('') : '<tr><td colspan="4" class="empty-state">No payments recorded.</td></tr>';
-}
-
-function renderAdminFares() {
-  $('#fares-table').innerHTML = state.fares.length ? state.fares.map((fare) => `
-    <tr>
-      <td><strong>${escapeHtml(fare.fareId)}</strong></td>
-      <td>${escapeHtml(stationName(fare.sourceStationId))} → ${escapeHtml(stationName(fare.destStationId))}</td>
-      <td>${money(fare.baseFare)}</td>
-      <td><div class="row-actions"><button class="text-action" type="button" data-admin-action="edit-fare" data-id="${escapeHtml(fare.fareId)}">Edit</button><button class="danger-action" type="button" data-admin-action="delete-fare" data-id="${escapeHtml(fare.fareId)}">Delete</button></div></td>
-    </tr>
-  `).join('') : '<tr><td colspan="4" class="empty-state">No fares configured.</td></tr>';
-}
-
-function renderUsers(filter = '') {
-  const normalized = filter.toLowerCase();
-  const rows = state.users.filter((user) => `${user.userId} ${displayName(user)} ${user.contact} ${user.role}`.toLowerCase().includes(normalized));
-  $('#user-count').textContent = `${rows.length} user${rows.length === 1 ? '' : 's'}`;
-  $('#users-table').innerHTML = rows.length ? rows.map((user) => `
-    <tr>
-      <td><strong>${escapeHtml(displayName(user))}</strong><small>${escapeHtml(user.userId)}</small></td>
-      <td>${escapeHtml(user.contact || '-')}</td>
-      <td>${escapeHtml(user.role || 'USER')}</td>
-      <td>${formatDate(user.registrationDate)}</td>
-      <td><span class="badge ${user.isActive === false ? 'muted' : 'good'}">${user.isActive === false ? 'Inactive' : 'Active'}</span></td>
-      <td><div class="row-actions"><button class="text-action" type="button" data-admin-action="edit-user" data-id="${escapeHtml(user.userId)}">Edit</button><button class="text-action" type="button" data-admin-action="toggle-user" data-id="${escapeHtml(user.userId)}">${user.isActive === false ? 'Activate' : 'Deactivate'}</button><button class="danger-action" type="button" data-admin-action="delete-user" data-id="${escapeHtml(user.userId)}">Delete</button></div></td>
-    </tr>
-  `).join('') : '<tr><td colspan="6" class="empty-state">No users found.</td></tr>';
-}
-
-function renderOperations() {
-  $('#trains-table').innerHTML = state.trains.length ? state.trains.map((train) => `
-    <tr>
-      <td><strong>${escapeHtml(train.trainNumber || train.trainId)}</strong><small>${escapeHtml(train.trainId)}</small></td>
-      <td>${escapeHtml(train.capacity ?? '-')}</td>
-      <td>${escapeHtml(train.totalCoaches ?? '-')}</td>
-      <td>${escapeHtml(train.manufactureYear ?? '-')}</td>
-      <td><span class="badge ${train.isActive === false ? 'muted' : 'good'}">${train.isActive === false ? 'Inactive' : 'Active'}</span></td>
-      <td><div class="row-actions"><button class="text-action" type="button" data-admin-action="edit-train" data-id="${escapeHtml(train.trainId)}">Edit</button><button class="text-action" type="button" data-admin-action="toggle-train" data-id="${escapeHtml(train.trainId)}">${train.isActive === false ? 'Activate' : 'Deactivate'}</button><button class="danger-action" type="button" data-admin-action="delete-train" data-id="${escapeHtml(train.trainId)}">Delete</button></div></td>
-    </tr>
-  `).join('') : '<tr><td colspan="6" class="empty-state">No trains configured.</td></tr>';
-
-  $('#schedules-table').innerHTML = state.schedules.length ? state.schedules.map((schedule) => `
-    <tr>
-      <td><strong>${escapeHtml(schedule.scheduleId)}</strong></td>
-      <td>${escapeHtml(trainName(schedule.trainId))}</td>
-      <td>${escapeHtml(routeName(schedule.routeId))}</td>
-      <td>${escapeHtml(schedule.dayOfWeek || '-')}</td>
-      <td>${schedule.scheduledDeparture ? `${formatDate(schedule.scheduledDeparture)} ${formatTime(schedule.scheduledDeparture)}` : '-'}</td>
-      <td><div class="row-actions"><button class="text-action" type="button" data-admin-action="edit-schedule" data-id="${escapeHtml(schedule.scheduleId)}">Edit</button><button class="text-action" type="button" data-admin-action="toggle-schedule" data-id="${escapeHtml(schedule.scheduleId)}">${schedule.isActive === false ? 'Activate' : 'Deactivate'}</button><button class="danger-action" type="button" data-admin-action="delete-schedule" data-id="${escapeHtml(schedule.scheduleId)}">Delete</button></div></td>
-    </tr>
-  `).join('') : '<tr><td colspan="6" class="empty-state">No schedules configured.</td></tr>';
-
-  $('#metrocards-table').innerHTML = state.metroCards.length ? state.metroCards.map((card) => `
-    <tr>
-      <td><strong>${escapeHtml(card.cardId)}</strong></td>
-      <td>${escapeHtml(displayName(state.users.find((user) => user.userId === card.passengerId)) || card.passengerId)}</td>
-      <td>${money(card.balance)}</td>
-      <td>${formatDate(card.expiryDate)}</td>
-      <td><span class="badge ${card.isActive === false ? 'muted' : 'good'}">${card.isActive === false ? 'Inactive' : 'Active'}</span></td>
-      <td><div class="row-actions"><button class="text-action" type="button" data-admin-action="edit-card" data-id="${escapeHtml(card.cardId)}">Edit</button><button class="text-action" type="button" data-admin-action="toggle-card" data-id="${escapeHtml(card.cardId)}">${card.isActive === false ? 'Activate' : 'Deactivate'}</button><button class="danger-action" type="button" data-admin-action="delete-card" data-id="${escapeHtml(card.cardId)}">Delete</button></div></td>
-    </tr>
-  `).join('') : '<tr><td colspan="6" class="empty-state">No metro cards issued.</td></tr>';
-
-  $('#maintenance-table').innerHTML = state.maintenanceIssues.length ? state.maintenanceIssues.map((issue) => `
-    <tr>
-      <td><strong>${escapeHtml(issue.issueId)}</strong><small>${formatDate(issue.createdAt)}</small></td>
-      <td>${escapeHtml(issue.trainId ? trainName(issue.trainId) : '-')}${issue.stationId ? ` / ${escapeHtml(stationName(issue.stationId))}` : ''}</td>
-      <td>${escapeHtml(issue.issueType || '-')}</td>
-      <td><span class="fare-chip">${escapeHtml(issue.priority || '-')}</span></td>
-      <td><span class="badge ${issue.status === 'RESOLVED' ? 'good' : 'muted'}">${escapeHtml(issue.status || 'OPEN')}</span></td>
-      <td><div class="row-actions"><button class="text-action" type="button" data-admin-action="edit-issue" data-id="${escapeHtml(issue.issueId)}">Edit</button>${issue.status === 'RESOLVED' ? '' : `<button class="text-action" type="button" data-admin-action="resolve-issue" data-id="${escapeHtml(issue.issueId)}">Resolve</button>`}<button class="danger-action" type="button" data-admin-action="delete-issue" data-id="${escapeHtml(issue.issueId)}">Delete</button></div></td>
-    </tr>
-  `).join('') : '<tr><td colspan="6" class="empty-state">No maintenance issues logged.</td></tr>';
-}
-
-function renderRouteStations() {
-  const tbody = $('#route-stations-table');
-  if (!tbody) return;
-  const rows = [...state.routeStations].sort((a, b) => String(a.routeId).localeCompare(String(b.routeId))
-    || Number(a.sequenceNumber || 0) - Number(b.sequenceNumber || 0));
-  tbody.innerHTML = rows.length ? rows.map((item) => `
-    <tr>
-      <td>${escapeHtml(routeName(item.routeId))}<small>${escapeHtml(item.routeId)}</small></td>
-      <td>${escapeHtml(stationName(item.stationId))}<small>${escapeHtml(item.stationId)}</small></td>
-      <td>${escapeHtml(item.sequenceNumber ?? '-')}</td>
-      <td><button class="danger-action" type="button" data-admin-action="delete-route-station" data-id="${escapeHtml(item.id)}">Remove stop</button></td>
-    </tr>
-  `).join('') : '<tr><td colspan="4" class="empty-state">No route station mappings configured.</td></tr>';
-}
-
 /* ---------------- Refresh / load ---------------- */
 function refreshAll() {
   if (!state.currentUser) return;
@@ -1195,6 +9,7 @@ function refreshAll() {
   renderRecent();
   renderTicketsPage($('#ticket-search')?.value || '');
   renderNetwork();
+  renderDashboardTransit();
   renderMetroCard();
   renderProfile();
 
@@ -1228,6 +43,8 @@ async function loadData() {
     }
     const opsValues = await Promise.all(opsResources.map((resource) => api(resourceEndpoints[resource])));
     opsResources.forEach((resource, index) => { state[resource] = opsValues[index] || []; });
+    const passengerCard = state.metroCards.find((card) => card.passengerId === state.currentUser?.userId);
+    await loadMetroCardActivity(passengerCard?.cardId);
     refreshAll();
     navigate(location.hash.slice(1) || 'dashboard');
   } catch (error) {
@@ -1245,6 +62,7 @@ function navigate(view) {
   const found = navItems().find((item) => item.view === nextView);
   $('#view-title').textContent = found ? found.label : 'Dashboard';
   if (location.hash.slice(1) !== nextView) location.hash = nextView;
+  window.scrollTo(0, 0);
   if (nextView !== 'network') closeStationPanel();
   setSceneView(nextView);
 }
@@ -1331,14 +149,60 @@ function updateFareBreakdown() {
 
 function updatePaymentSummary() {
   $('#payment-amount').textContent = money(Number($('#booking-amount').value || 0));
+  updatePaymentMethodOptions();
+}
+
+function bookingPassengerId() {
+  return isAdmin() ? $('#booking-passenger')?.value : state.currentUser?.userId;
+}
+function selectedPaymentMethod() {
+  return document.querySelector('input[name="payment-method"]:checked')?.value || 'DEMO';
+}
+
+/* The metro card option is only offered when the paying passenger has an active, unexpired card. */
+function updatePaymentMethodOptions() {
+  const cardRadio = document.querySelector('input[name="payment-method"][value="METRO_CARD"]');
+  const demoRadio = document.querySelector('input[name="payment-method"][value="DEMO"]');
+  const note = $('#pay-card-note');
+  if (!cardRadio || !demoRadio || !note) return;
+  const passengerId = bookingPassengerId();
+  const card = passengerId ? state.metroCards.find((item) => item.passengerId === passengerId && cardIsUsable(item)) : null;
+  const validPass = card && state.metroCardPasses.find((pass) => pass.cardId === card.cardId
+    && new Date(pass.startsAt) <= new Date() && new Date(pass.expiresAt) > new Date());
+  const total = Number($('#booking-amount').value || 0);
+  if (!card) {
+    const anyCard = passengerId ? state.metroCards.some((item) => item.passengerId === passengerId) : false;
+    note.textContent = anyCard ? 'The card is inactive or expired' : 'No metro card on file';
+    cardRadio.disabled = true;
+    if (cardRadio.checked) demoRadio.checked = true;
+  } else {
+    cardRadio.disabled = false;
+    note.textContent = validPass
+      ? `${validPass.passType} unlimited pass · valid until ${new Date(validPass.expiresAt).toLocaleString()}`
+      : total > Number(card.balance || 0)
+      ? `Balance ${money(card.balance)} on ${card.cardId}. About ${money(total)} is needed, so top up first.`
+      : `Balance ${money(card.balance)} on ${card.cardId}`;
+  }
+  $('#pay-option-card')?.classList.toggle('disabled', cardRadio.disabled);
+  const method = selectedPaymentMethod();
+  const paymentNote = $('#payment-note');
+  if (paymentNote) {
+    paymentNote.textContent = method === 'METRO_CARD'
+      ? (validPass ? 'Your active time pass covers this ride. No wallet balance will be deducted.' : 'The fare is deducted from the metro card when you confirm. The server calculates the final amount.')
+      : 'This is a demo checkout. Confirming will simulate payment and generate your ticket immediately.';
+  }
+  const submitLabel = $('#booking-submit span');
+  if (submitLabel) submitLabel.textContent = method === 'METRO_CARD' ? (validPass ? 'Use time pass' : 'Pay with metro card') : 'Pay & generate ticket';
 }
 
 function updateBookingPreview() {
   if ($('#booking-from') && $('#booking-to')) updateRouteRecap();
+  updatePaymentMethodOptions();
 }
 
 function resetBookingForm() {
   $('#booking-form').reset();
+  updatePaymentMethodOptions();
   goToBookingStep(1);
   $('#booking-step1-error').textContent = '';
 }
@@ -1354,9 +218,13 @@ async function createTicket() {
   const ticketType = $('#booking-type').value || 'SINGLE';
   const pricing = calculateBookingFare(from, to, ticketType, passengerCount);
   if (!pricing) throw new Error('No connected route or valid fare is configured for this journey.');
+  const paymentMethod = selectedPaymentMethod();
+  if (paymentMethod === 'METRO_CARD' && !state.metroCards.some((item) => item.passengerId === passengerId && cardIsUsable(item))) {
+    throw new Error('This passenger has no active, unexpired metro card. Choose the demo checkout instead.');
+  }
   const result = await api('bookings', {
     method: 'POST',
-    body: JSON.stringify({ passengerId, sourceStationId: from, destStationId: to, ticketType, passengerCount })
+    body: JSON.stringify({ passengerId, sourceStationId: from, destStationId: to, ticketType, passengerCount, paymentMethod })
   });
   const created = result.ticket;
   const payment = result.payment;
@@ -1366,10 +234,17 @@ async function createTicket() {
   }
   state.payments = [...state.payments.filter((item) => item.paymentId !== payment.paymentId), payment];
   state.tickets = [...state.tickets.filter((item) => item.ticketId !== created.ticketId), created];
+  const paidByCard = payment.paymentMethod === 'METRO_CARD' && payment.metroCardId;
+  if (paidByCard && result.remainingCardBalance != null) {
+    state.metroCards = state.metroCards.map((item) => item.cardId === payment.metroCardId
+      ? { ...item, balance: result.remainingCardBalance } : item);
+  }
   refreshAll();
   showTicketSuccess(created, amount);
   resetBookingForm();
-  notify('Ticket issued successfully');
+  notify(paidByCard && result.remainingCardBalance != null
+    ? `Ticket issued. ${money(result.remainingCardBalance)} left on the metro card.`
+    : 'Ticket issued successfully');
 }
 
 function showTicketSuccess(ticket, amount) {
@@ -1401,23 +276,48 @@ function showTicketSuccess(ticket, amount) {
   }, 900);
 }
 
-async function deleteTicket(ticketId) {
-  if (!confirm(`Delete ticket ${ticketId}?`)) return;
-  await api(`tickets/${encodeURIComponent(ticketId)}`, { method: 'DELETE' });
-  state.tickets = state.tickets.filter((ticket) => ticket.ticketId !== ticketId);
-  state.payments = state.payments.filter((payment) => payment.ticketId !== ticketId);
-  refreshAll();
-  notify('Ticket and its demo payment record deleted');
+/* Deleting or cancelling a ticket paid with a metro card refunds the card on the server (unless the ticket was used).
+   The toast reports what actually happened to the balance after the data is reloaded. */
+async function removeTicket(ticketId, cancel) {
+  const verb = cancel ? 'cancelled' : 'deleted';
+  const ticket = state.tickets.find((item) => item.ticketId === ticketId);
+  const payment = state.payments.find((item) => item.ticketId === ticketId);
+  const paidByCard = ['METRO_CARD', 'METRO_CARD_PASS'].includes(payment?.paymentMethod) && Boolean(payment.metroCardId);
+  const refundable = payment?.paymentMethod === 'METRO_CARD' && Number(payment.amount) > 0 && paidByCard && !ticket?.isUsed;
+  const cardBefore = refundable ? state.metroCards.find((item) => item.cardId === payment.metroCardId) : null;
+  const balanceBefore = cardBefore ? Number(cardBefore.balance) : null;
+  const refundNote = cardBefore ? ` ${money(payment.amount)} will be refunded to the metro card.` : '';
+  if (!(await confirmAction({ title: `${cancel ? 'Cancel' : 'Delete'} ticket?`, message: `Ticket ${ticketId}.${refundNote}`, confirmLabel: cancel ? 'Cancel ticket' : 'Delete ticket', danger: true }))) return;
+
+  try {
+    await api(`tickets/${encodeURIComponent(ticketId)}`, { method: 'DELETE' });
+  } catch (error) {
+    // A failure usually means the data on screen is stale, so reload it before reporting.
+    try { await loadData(); } catch {}
+    notify(`Could not ${cancel ? 'cancel' : 'delete'} the ticket: ${error.message}`, true);
+    return;
+  }
+  state.tickets = state.tickets.filter((item) => item.ticketId !== ticketId);
+  state.payments = state.payments.filter((item) => item.ticketId !== ticketId);
+  let reloaded = true;
+  try { await loadData(); } catch { reloaded = false; refreshAll(); }
+
+  if (!paidByCard) { notify(`Ticket ${verb} and its demo payment record removed.`); return; }
+  if (ticket?.isUsed) { notify(`Ticket ${verb}. A used ticket is not refunded.`); return; }
+  if (payment?.paymentMethod === 'METRO_CARD_PASS') { notify(`Ticket ${verb}. Your time pass remains valid.`); return; }
+  if (!cardBefore) { notify(`Ticket ${verb}. The metro card no longer exists, so nothing was refunded.`); return; }
+  if (!reloaded) { notify(`Ticket ${verb}. Refresh the page to see the updated card balance.`); return; }
+  const cardAfter = state.metroCards.find((item) => item.cardId === cardBefore.cardId);
+  if (!cardAfter) { notify(`Ticket ${verb}. The metro card no longer exists, so nothing was refunded.`); return; }
+  if (Number(cardAfter.balance) > balanceBefore) {
+    notify(`Ticket ${verb}, ${money(payment.amount)} refunded to ${isAdmin() ? "the passenger's" : 'your'} metro card.`);
+  } else {
+    notify(`Ticket ${verb}, but the metro card balance did not change. Check the card.`, true);
+  }
 }
 
-async function cancelTicket(ticketId) {
-  if (!confirm(`Cancel ticket ${ticketId}?`)) return;
-  await api(`tickets/${encodeURIComponent(ticketId)}`, { method: 'DELETE' });
-  state.tickets = state.tickets.filter((ticket) => ticket.ticketId !== ticketId);
-  state.payments = state.payments.filter((payment) => payment.ticketId !== ticketId);
-  refreshAll();
-  notify('Ticket cancelled and demo payment record removed');
-}
+const deleteTicket = (ticketId) => removeTicket(ticketId, false);
+const cancelTicket = (ticketId) => removeTicket(ticketId, true);
 
 /* ---------------- Home journey planner → prefill booking ---------------- */
 function startBookingFromJourney() {
@@ -1436,17 +336,12 @@ function startBookingFromJourney() {
 }
 
 /* ---------------- Admin row actions ---------------- */
-function askText(label, currentValue) {
-  const value = window.prompt(label, currentValue == null ? '' : String(currentValue));
-  return value === null ? null : value.trim();
-}
-
 async function deleteIfUnreferenced(resource, id, references, description) {
   if (references.some((items) => items.some((item) => item === id))) {
     notify(`This ${description} is already in use. Deactivate it instead of deleting it.`, true);
     return false;
   }
-  if (!window.confirm(`Delete ${description} "${id}"? This cannot be undone.`)) return false;
+  if (!(await confirmAction({ title: `Delete ${description}?`, message: `Delete "${id}"? This cannot be undone.`, confirmLabel: 'Delete', danger: true }))) return false;
   await api(`${resource}/${encodeURIComponent(id)}`, { method: 'DELETE' });
   return true;
 }
@@ -1468,14 +363,15 @@ async function runAdminAction(action, id) {
   switch (action) {
     case 'edit-station': {
       if (!station) break;
-      const stationCode = askText('Station code', station.stationCode);
-      if (stationCode === null) return;
-      const address = askText('Station address', station.address || '');
-      if (address === null) return;
-      const lineColor = askText('Line colour (hex, e.g. #2563EB)', station.lineColor || '#2563EB');
-      if (lineColor === null) return;
-      if (!stationCode || !/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(lineColor)) { notify('Enter a station code and a valid hex colour.', true); return; }
-      await sendUpdate('stations', id, station, { stationCode, address, lineColor }); changed = true; break;
+      openModal({ title: `Edit station ${station.stationCode || id}`, fields: [
+        { name: 'stationCode', label: 'Station code', value: station.stationCode || '' },
+        { name: 'address', label: 'Address', value: station.address || '' },
+        { name: 'lineColor', label: 'Line colour', type: 'color', value: station.lineColor || '#2563EB' }
+      ], onSubmit: async ({ stationCode, address, lineColor }) => {
+        if (!stationCode) throw new ApiError('Station code is required.', 400, { stationCode: 'Enter a station code.' });
+        await sendUpdate('stations', id, station, { stationCode, address, lineColor });
+        await loadData(); notify('Changes saved');
+      }}); return;
     }
     case 'toggle-station':
       if (!station) break;
@@ -1487,34 +383,32 @@ async function runAdminAction(action, id) {
         state.fares.some((item) => item.sourceStationId === id || item.destStationId === id),
         state.routeStations.some((item) => item.stationId === id),
         state.routes.some((item) => item.startStationId === id || item.endStationId === id),
-        state.maintenanceIssues.some((item) => item.stationId === id),
-        state.metroCards.some((item) => item.stationId === id)
+        state.maintenanceIssues.some((item) => item.stationId === id)
       ];
       if (referenced.some(Boolean)) { notify('This station is referenced by existing records. Close it instead of deleting it.', true); return; }
-      if (!window.confirm(`Delete station "${station.stationCode || id}"?`)) return;
+      if (!(await confirmAction({ title: 'Delete station?', message: `Delete ${station.stationCode || id}?`, confirmLabel: 'Delete station', danger: true }))) return;
       await api(`stations/${encodeURIComponent(id)}`, { method: 'DELETE' }); changed = true; break;
     }
     case 'edit-route': {
       if (!route) break;
-      const routeNameValue = askText('Route name', route.routeName);
-      if (routeNameValue === null) return;
-      const distanceText = askText('Total distance (km)', route.totalDistance);
-      if (distanceText === null) return;
-      const timeText = askText('Estimated duration (minutes)', route.estimatedTime);
-      if (timeText === null) return;
-      const lineColor = askText('Line colour (hex)', route.lineColor || '#2563EB');
-      if (lineColor === null) return;
-      const totalDistance = Number(distanceText), estimatedTime = Number(timeText);
-      if (!routeNameValue || !Number.isFinite(totalDistance) || totalDistance <= 0 || !Number.isInteger(estimatedTime) || estimatedTime <= 0 || !/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(lineColor)) {
-        notify('Enter a route name, positive distance and duration, and a valid hex colour.', true); return;
-      }
-      await sendUpdate('routes', id, route, { routeName: routeNameValue, totalDistance, estimatedTime, lineColor, updatedAt: localDateTimeString() }); changed = true; break;
+      openModal({ title: `Edit route ${route.routeName || id}`, fields: [
+        { name: 'routeName', label: 'Route name', value: route.routeName || '' },
+        { name: 'totalDistance', label: 'Total distance (km)', type: 'number', min: '0.1', step: '0.1', value: route.totalDistance },
+        { name: 'estimatedTime', label: 'Estimated duration (minutes)', type: 'number', min: '1', step: '1', value: route.estimatedTime },
+        { name: 'lineColor', label: 'Line colour', type: 'color', value: route.lineColor || '#2563EB' }
+      ], onSubmit: async ({ routeName, totalDistance, estimatedTime, lineColor }) => {
+        const distance = Number(totalDistance), duration = Number(estimatedTime), problems = {};
+        if (!routeName) problems.routeName = 'Route name is required.';
+        if (!Number.isFinite(distance) || distance <= 0) problems.totalDistance = 'Enter a positive distance.';
+        if (!Number.isInteger(duration) || duration <= 0) problems.estimatedTime = 'Enter a positive whole number of minutes.';
+        if (Object.keys(problems).length) throw new ApiError(Object.values(problems)[0], 400, problems);
+        await sendUpdate('routes', id, route, { routeName, totalDistance: distance, estimatedTime: duration, lineColor, updatedAt: localDateTimeString() });
+        await loadData(); notify('Changes saved');
+      }}); return;
     }
     case 'delete-route': {
       if (!route) break;
-      if (!window.confirm(`Delete route "${route.routeName || id}" and its schedules and station mappings?`)) return;
-      for (const item of state.schedules.filter((entry) => entry.routeId === id)) await api(`schedules/${encodeURIComponent(item.scheduleId)}`, { method: 'DELETE' });
-      for (const item of state.routeStations.filter((entry) => entry.routeId === id)) await api(`route-stations/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+      if (!(await confirmAction({ title: 'Delete route?', message: `Delete ${route.routeName || id} and its schedules and station mappings?`, confirmLabel: 'Delete route', danger: true }))) return;
       await api(`routes/${encodeURIComponent(id)}`, { method: 'DELETE' }); changed = true; break;
     }
     case 'delete-route-station': {
@@ -1525,20 +419,26 @@ async function runAdminAction(action, id) {
       if (siblings.length <= 2 || mapping.id === siblings[0].id || mapping.id === siblings[siblings.length - 1].id) {
         notify('Keep at least two endpoint stops. Delete or edit the route if its endpoints need to change.', true); return;
       }
-      if (!window.confirm(`Remove ${stationName(mapping.stationId)} from ${routeName(mapping.routeId)}?`)) return;
+      if (!(await confirmAction({ title: 'Remove route stop?', message: `Remove ${stationName(mapping.stationId)} from ${routeName(mapping.routeId)}?`, confirmLabel: 'Remove stop', danger: true }))) return;
       await api(`routes/${encodeURIComponent(mapping.routeId)}/stops/${encodeURIComponent(mapping.id)}`, { method: 'DELETE' }); changed = true; break;
     }
     case 'edit-train': {
       if (!train) break;
-      const trainNumber = askText('Train number', train.trainNumber);
-      if (trainNumber === null) return;
-      const capacity = Number(askText('Capacity', train.capacity));
-      const coaches = Number(askText('Number of coaches', train.totalCoaches));
-      const year = Number(askText('Manufacture year', train.manufactureYear));
-      if (!trainNumber || !Number.isInteger(capacity) || capacity < 1 || !Number.isInteger(coaches) || coaches < 1 || !Number.isInteger(year) || year < 1900 || year > new Date().getFullYear() + 1) {
-        notify('Enter a valid train number, positive capacity/coaches, and a valid manufacture year.', true); return;
-      }
-      await sendUpdate('trains', id, train, { trainNumber, capacity, totalCoaches: coaches, manufactureYear: year }); changed = true; break;
+      openModal({ title: `Edit train ${train.trainNumber || id}`, fields: [
+        { name: 'trainNumber', label: 'Train number', value: train.trainNumber || '' },
+        { name: 'capacity', label: 'Capacity', type: 'number', min: '1', step: '1', value: train.capacity },
+        { name: 'totalCoaches', label: 'Number of coaches', type: 'number', min: '1', step: '1', value: train.totalCoaches },
+        { name: 'manufactureYear', label: 'Manufacture year', type: 'number', min: '1900', max: String(new Date().getFullYear() + 1), step: '1', value: train.manufactureYear }
+      ], onSubmit: async ({ trainNumber, capacity, totalCoaches, manufactureYear }) => {
+        const problems = {}, cap = Number(capacity), coaches = Number(totalCoaches), year = Number(manufactureYear);
+        if (!trainNumber) problems.trainNumber = 'Train number is required.';
+        if (!Number.isInteger(cap) || cap < 1) problems.capacity = 'Enter a positive whole number.';
+        if (!Number.isInteger(coaches) || coaches < 1) problems.totalCoaches = 'Enter a positive whole number.';
+        if (!Number.isInteger(year) || year < 1900 || year > new Date().getFullYear() + 1) problems.manufactureYear = 'Enter a valid year.';
+        if (Object.keys(problems).length) throw new ApiError(Object.values(problems)[0], 400, problems);
+        await sendUpdate('trains', id, train, { trainNumber, capacity: cap, totalCoaches: coaches, manufactureYear: year });
+        await loadData(); notify('Changes saved');
+      }}); return;
     }
     case 'toggle-train':
       if (!train) break;
@@ -1548,70 +448,108 @@ async function runAdminAction(action, id) {
       if (state.schedules.some((item) => item.trainId === id) || state.maintenanceIssues.some((item) => item.trainId === id)) {
         notify('This train is referenced by schedules or maintenance issues. Deactivate it instead of deleting it.', true); return;
       }
-      if (!window.confirm(`Delete train "${train.trainNumber || id}"?`)) return;
+      if (!(await confirmAction({ title: 'Delete train?', message: `Delete train ${train.trainNumber || id}?`, confirmLabel: 'Delete train', danger: true }))) return;
       await api(`trains/${encodeURIComponent(id)}`, { method: 'DELETE' }); changed = true; break;
     }
     case 'edit-schedule': {
       if (!schedule) break;
       const dayOptions = ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY'];
-      const dayOfWeek = (askText(`Day of week (${dayOptions.join('/')})`, schedule.dayOfWeek) || '').toUpperCase();
-      if (!dayOptions.includes(dayOfWeek)) { notify('Choose a valid weekday name.', true); return; }
       const existingDep = String(schedule.scheduledDeparture || '').slice(0,16);
       const existingArr = String(schedule.scheduledArrival || '').slice(0,16);
-      const departureValue = askText('Departure (YYYY-MM-DDTHH:mm)', existingDep);
-      if (departureValue === null) return;
-      const arrivalValue = askText('Arrival (YYYY-MM-DDTHH:mm)', existingArr);
-      if (arrivalValue === null) return;
-      const departure = parseDateValue(departureValue), arrival = parseDateValue(arrivalValue);
-      if (!departure || !arrival || Number.isNaN(departure.getTime()) || Number.isNaN(arrival.getTime()) || arrival <= departure) { notify('Enter valid local departure and later arrival times.', true); return; }
-      const actualDay = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'][departure.getDay()];
-      if (actualDay !== dayOfWeek) { notify(`The departure date falls on ${actualDay}; choose that weekday or change the date.`, true); return; }
-      const validFrom = askText('Valid from (YYYY-MM-DD)', schedule.validFrom || localDateString(departure));
-      if (validFrom === null) return;
-      const validTo = askText('Valid through (YYYY-MM-DD)', schedule.validTo || '');
-      if (validTo === null) return;
-      if (!isValidDateOnly(validFrom) || (validTo && !isValidDateOnly(validTo)) || (validTo && parseDateValue(validTo) < parseDateValue(validFrom))) { notify('Enter valid schedule dates, and ensure valid through is not before valid from.', true); return; }
-      await sendUpdate('schedules', id, schedule, { dayOfWeek, scheduledDeparture: localDateTimeString(departure), scheduledArrival: localDateTimeString(arrival), validFrom, validTo: validTo || null }); changed = true; break;
+      openModal({ title: `Edit schedule ${id}`, fields: [
+        { name: 'dayOfWeek', label: 'Day of week', type: 'select', value: schedule.dayOfWeek, options: dayOptions.map((value) => ({ value, label: value[0] + value.slice(1).toLowerCase() })) },
+        { name: 'departure', label: 'Departure', type: 'datetime-local', value: existingDep },
+        { name: 'arrival', label: 'Arrival', type: 'datetime-local', value: existingArr },
+        { name: 'validFrom', label: 'Valid from', type: 'date', value: schedule.validFrom || '' },
+        { name: 'validTo', label: 'Valid through', type: 'date', value: schedule.validTo || '' }
+      ], onSubmit: async ({ dayOfWeek, departure: departureValue, arrival: arrivalValue, validFrom, validTo }) => {
+        const departure = parseDateValue(departureValue), arrival = parseDateValue(arrivalValue), problems = {};
+        if (!departure || !arrival || Number.isNaN(departure.getTime()) || Number.isNaN(arrival.getTime()) || arrival <= departure) problems.arrival = 'Arrival must be after departure.';
+        if (departure && !Number.isNaN(departure.getTime())) {
+          const actualDay = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'][departure.getDay()];
+          if (actualDay !== dayOfWeek) problems.dayOfWeek = `Departure falls on ${actualDay}.`;
+        }
+        if (!isValidDateOnly(validFrom)) problems.validFrom = 'Enter a valid start date.';
+        if (validTo && (!isValidDateOnly(validTo) || (validFrom && parseDateValue(validTo) < parseDateValue(validFrom)))) problems.validTo = 'End date must be on or after the start date.';
+        if (Object.keys(problems).length) throw new ApiError(Object.values(problems)[0], 400, problems);
+        await sendUpdate('schedules', id, schedule, { dayOfWeek, scheduledDeparture: localDateTimeString(departure), scheduledArrival: localDateTimeString(arrival), validFrom, validTo: validTo || null });
+        await loadData(); notify('Changes saved');
+      }}); return;
     }
     case 'toggle-schedule':
       if (!schedule) break;
       await sendUpdate('schedules', id, schedule, { isActive: schedule.isActive === false }); changed = true; break;
     case 'delete-schedule':
       if (!schedule) break;
-      if (!window.confirm(`Delete schedule "${id}"?`)) return;
+      if (!(await confirmAction({ title: 'Delete schedule?', message: `Delete schedule ${id}?`, confirmLabel: 'Delete schedule', danger: true }))) return;
       await api(`schedules/${encodeURIComponent(id)}`, { method: 'DELETE' }); changed = true; break;
     case 'edit-fare': {
       if (!fare) break;
       const sources = state.stations.filter((item) => item.isActive !== false);
-      const sourcePrompt = `Source station ID (${sources.map((item) => item.stationId).join(', ')})`;
-      const sourceStationId = askText(sourcePrompt, fare.sourceStationId);
-      if (sourceStationId === null) return;
-      const destStationId = askText(`Destination station ID (${sources.map((item) => item.stationId).join(', ')})`, fare.destStationId);
-      if (destStationId === null) return;
-      const amountText = askText('Fare amount (₹)', fare.baseFare);
-      if (amountText === null) return;
-      const baseFare = Number(amountText);
-      if (!sources.some((item) => item.stationId === sourceStationId) || !sources.some((item) => item.stationId === destStationId) || sourceStationId === destStationId || !Number.isFinite(baseFare) || baseFare <= 0) {
-        notify('Choose two different active stations and a positive fare.', true); return;
-      }
-      await sendUpdate('fares', id, fare, { sourceStationId, destStationId, baseFare }); changed = true; break;
+      const stationOptions = sources.map((item) => ({ value: item.stationId, label: `${item.stationCode || item.stationId} (${item.stationId})` }));
+      openModal({ title: `Edit fare ${id}`, fields: [
+        { name: 'sourceStationId', label: 'From', type: 'select', value: fare.sourceStationId, options: stationOptions },
+        { name: 'destStationId', label: 'To', type: 'select', value: fare.destStationId, options: stationOptions },
+        { name: 'baseFare', label: 'Fare amount (₹)', type: 'number', min: '0.01', step: '0.01', value: fare.baseFare }
+      ], onSubmit: async ({ sourceStationId, destStationId, baseFare: amountText }) => {
+        const amount = Number(amountText), problems = {};
+        if (!sources.some((item) => item.stationId === sourceStationId)) problems.sourceStationId = 'Choose an active station.';
+        if (!sources.some((item) => item.stationId === destStationId) || sourceStationId === destStationId) problems.destStationId = 'Choose a different active station.';
+        if (!Number.isFinite(amount) || amount <= 0) problems.baseFare = 'Enter a positive fare.';
+        if (Object.keys(problems).length) throw new ApiError(Object.values(problems)[0], 400, problems);
+        await sendUpdate('fares', id, fare, { sourceStationId, destStationId, baseFare: amount });
+        await loadData(); notify('Changes saved');
+      }}); return;
     }
     case 'delete-fare':
       if (!fare) break;
       if (state.tickets.some((item) => item.fareId === id)) { notify('This fare is used by existing tickets. Keep it so ticket history stays readable.', true); return; }
-      if (!window.confirm(`Delete fare "${id}"?`)) return;
+      if (!(await confirmAction({ title: 'Delete fare?', message: `Delete fare ${id}?`, confirmLabel: 'Delete fare', danger: true }))) return;
       await api(`fares/${encodeURIComponent(id)}`, { method: 'DELETE' }); changed = true; break;
     case 'edit-user': {
       if (!user) break;
-      const firstName = askText('First name', user.firstName || '');
-      if (firstName === null) return;
-      const lastName = askText('Last name', user.lastName || '');
-      if (lastName === null) return;
-      const contact = askText('Contact / email', user.contact || '');
-      if (contact === null) return;
-      const role = (askText('Role (USER or ADMIN)', user.role || 'USER') || '').toUpperCase();
-      if (!['USER','ADMIN'].includes(role) || !firstName || !lastName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) { notify('Enter first name, last name, a valid email, and role USER or ADMIN.', true); return; }
-      await sendUpdate('users', id, user, { firstName, lastName, contact, role }); changed = true; break;
+      openModal({
+        title: `Edit user ${user.userId}`,
+        fields: [
+          { name: 'firstName', label: 'First name', value: user.firstName || '' },
+          { name: 'lastName', label: 'Last name (optional)', value: user.lastName || '' },
+          { name: 'contact', label: 'Email', type: 'email', value: user.contact || '' },
+          { name: 'role', label: 'Role', type: 'select', value: user.role || 'USER',
+            options: [{ value: 'USER', label: 'Passenger' }, { value: 'ADMIN', label: 'Admin' }] }
+        ],
+        submitLabel: 'Save changes',
+        onSubmit: async ({ firstName, lastName, contact, role }) => {
+          const problems = {};
+          if (!firstName) problems.firstName = 'First name is required.';
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) problems.contact = 'Enter a valid email address.';
+          if (user.userId === state.currentUser?.userId && role !== 'ADMIN') problems.role = 'You cannot remove your own admin role.';
+          if (Object.keys(problems).length) throw new ApiError(Object.values(problems)[0], 400, problems);
+          await sendUpdate('users', id, user, { firstName, lastName: lastName || null, contact, role });
+          try { await loadData(); } catch {}
+          notify('Changes saved');
+        }
+      });
+      return;
+    }
+    case 'reset-password': {
+      if (!user) break;
+      openModal({
+        title: `Reset password for ${user.userId}`,
+        intro: 'The new password replaces the current one. Share it with the user directly.',
+        fields: [{ name: 'password', label: 'New password', type: 'password', maxlength: '72', minlength: '6', autocomplete: 'new-password', hint: '6 to 72 characters.' }],
+        submitLabel: 'Reset password',
+        onSubmit: async ({ password }) => {
+          // Untrimmed on purpose: spaces are valid password characters.
+          const raw = $('#modal-field-password').value;
+          if (raw.length < 6 || raw.length > 72) {
+            const message = 'Password must be 6 to 72 characters.';
+            throw new ApiError(message, 400, { password: message });
+          }
+          await sendUpdate('users', id, user, { password: raw });
+          notify(`Password reset for ${displayName(user)}.`);
+        }
+      });
+      return;
     }
     case 'toggle-user':
       if (!user) break;
@@ -1623,48 +561,68 @@ async function runAdminAction(action, id) {
       if (state.tickets.some((item) => item.passengerId === id) || state.metroCards.some((item) => item.passengerId === id) || state.maintenanceIssues.some((item) => item.reportedBy === id)) {
         notify('This user has tickets, a metro card, or maintenance reports. Deactivate the account instead of deleting it.', true); return;
       }
-      if (!window.confirm(`Delete user "${displayName(user)}" (${id})?`)) return;
+      if (!(await confirmAction({ title: 'Delete user?', message: `Delete ${displayName(user)} (${id})?`, confirmLabel: 'Delete user', danger: true }))) return;
       await api(`users/${encodeURIComponent(id)}`, { method: 'DELETE' }); changed = true; break;
     }
+    case 'topup-card':
+      openTopUpModal(id);
+      return;
     case 'edit-card': {
       if (!card) break;
-      const passengers = state.users.filter((item) => item.role !== 'ADMIN' && item.isActive !== false);
-      const passengerId = askText(`Passenger ID (${passengers.map((item) => item.userId).join(', ')})`, card.passengerId);
-      if (passengerId === null) return;
-      const balanceText = askText('Card balance (₹)', card.balance);
-      if (balanceText === null) return;
-      const expiryDate = askText('Expiry date (YYYY-MM-DD)', card.expiryDate);
-      if (expiryDate === null) return;
-      const balance = Number(balanceText);
-      if (!passengers.some((item) => item.userId === passengerId) || !Number.isFinite(balance) || balance < 0 || !isValidDateOnly(expiryDate) || !isValidDateOnly(card.issueDate) || parseDateValue(expiryDate) < parseDateValue(card.issueDate)) {
-        notify('Choose an existing passenger, non-negative balance, and valid expiry date.', true); return;
-      }
-      await sendUpdate('metro-cards', id, card, { passengerId, balance, expiryDate }); changed = true; break;
+      const passengers = state.users.filter((item) => item.role !== 'ADMIN' && (item.isActive !== false || item.userId === card.passengerId));
+      openModal({
+        title: `Edit card ${card.cardId}`,
+        fields: [
+          { name: 'passengerId', label: 'Passenger', type: 'select', value: card.passengerId,
+            options: passengers.map((item) => ({ value: item.userId, label: `${displayName(item)} (${item.userId})` })) },
+          { name: 'balance', label: 'Balance (₹)', type: 'number', min: '0', step: '0.01', value: card.balance ?? 0 },
+          { name: 'expiryDate', label: 'Expiry date', type: 'date', value: card.expiryDate || '' }
+        ],
+        submitLabel: 'Save changes',
+        onSubmit: async ({ passengerId, balance: balanceText, expiryDate }) => {
+          const problems = {};
+          const balance = Number(balanceText);
+          if (!passengers.some((item) => item.userId === passengerId)) problems.passengerId = 'Choose an existing passenger.';
+          if (balanceText === '' || !Number.isFinite(balance) || balance < 0) problems.balance = 'Enter a balance of 0 or more.';
+          if (!isValidDateOnly(expiryDate)) problems.expiryDate = 'Enter a valid expiry date.';
+          else if (isValidDateOnly(card.issueDate) && parseDateValue(expiryDate) < parseDateValue(card.issueDate)) problems.expiryDate = 'Expiry cannot be before the issue date.';
+          if (Object.keys(problems).length) throw new ApiError(Object.values(problems)[0], 400, problems);
+          await sendUpdate('metro-cards', id, card, { passengerId, balance, expiryDate });
+          try { await loadData(); } catch {}
+          notify('Changes saved');
+        }
+      });
+      return;
     }
     case 'toggle-card':
       if (!card) break;
       await sendUpdate('metro-cards', id, card, { isActive: card.isActive === false }); changed = true; break;
     case 'delete-card':
       if (!card) break;
-      if (!window.confirm(`Delete metro card "${id}"?`)) return;
+      if (!(await confirmAction({ title: 'Delete metro card?', message: `Delete card ${id}?`, confirmLabel: 'Delete card', danger: true }))) return;
       await api(`metro-cards/${encodeURIComponent(id)}`, { method: 'DELETE' }); changed = true; break;
     case 'edit-issue': {
       if (!issue) break;
-      const issueType = askText('Issue type', issue.issueType || '');
-      if (issueType === null) return;
-      const description = askText('Description', issue.description || '');
-      if (description === null) return;
-      const priority = (askText('Priority (LOW, MEDIUM, HIGH)', issue.priority || 'MEDIUM') || '').toUpperCase();
-      const status = (askText('Status (OPEN, IN_PROGRESS, RESOLVED)', issue.status || 'OPEN') || '').toUpperCase();
-      if (!issueType || !description || !['LOW','MEDIUM','HIGH'].includes(priority) || !['OPEN','IN_PROGRESS','RESOLVED'].includes(status)) { notify('Enter a description and valid priority and status.', true); return; }
-      await sendUpdate('maintenance-issues', id, issue, { issueType, description, priority, status, resolvedAt: status === 'RESOLVED' ? (issue.resolvedAt || localDateTimeString()) : null }); changed = true; break;
+      openModal({ title: `Edit maintenance issue ${id}`, fields: [
+        { name: 'issueType', label: 'Issue type', value: issue.issueType || '' },
+        { name: 'description', label: 'Description', value: issue.description || '' },
+        { name: 'priority', label: 'Priority', type: 'select', value: issue.priority || 'MEDIUM', options: ['LOW','MEDIUM','HIGH'].map((value) => ({ value, label: value[0] + value.slice(1).toLowerCase() })) },
+        { name: 'status', label: 'Status', type: 'select', value: issue.status || 'OPEN', options: [{ value: 'OPEN', label: 'Open' }, { value: 'IN_PROGRESS', label: 'In progress' }, { value: 'RESOLVED', label: 'Resolved' }] }
+      ], onSubmit: async ({ issueType, description, priority, status }) => {
+        const problems = {};
+        if (!issueType) problems.issueType = 'Issue type is required.';
+        if (!description) problems.description = 'Description is required.';
+        if (Object.keys(problems).length) throw new ApiError(Object.values(problems)[0], 400, problems);
+        await sendUpdate('maintenance-issues', id, issue, { issueType, description, priority, status, resolvedAt: status === 'RESOLVED' ? (issue.resolvedAt || localDateTimeString()) : null });
+        await loadData(); notify('Changes saved');
+      }}); return;
     }
     case 'resolve-issue':
       if (!issue) break;
       await sendUpdate('maintenance-issues', id, issue, { status: 'RESOLVED', resolvedAt: localDateTimeString() }); changed = true; break;
     case 'delete-issue':
       if (!issue) break;
-      if (!window.confirm(`Delete maintenance issue "${id}"?`)) return;
+      if (!(await confirmAction({ title: 'Delete maintenance issue?', message: `Delete issue ${id}?`, confirmLabel: 'Delete issue', danger: true }))) return;
       await api(`maintenance-issues/${encodeURIComponent(id)}`, { method: 'DELETE' }); changed = true; break;
     default:
       return;
@@ -1677,6 +635,11 @@ async function runAdminAction(action, id) {
 
 /* ---------------- Event binding ---------------- */
 function bindEvents() {
+  // Close expandable add panels after a successful form reset.
+  document.addEventListener('reset', (event) => {
+    const panel = event.target.closest?.('details');
+    if (panel) panel.open = false;
+  });
   document.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-admin-action]');
     if (!button || button.disabled) return;
@@ -1684,10 +647,24 @@ function bindEvents() {
     try {
       await runAdminAction(button.dataset.adminAction, button.dataset.id);
     } catch (error) {
+      // A 404 or 409 usually means another admin changed the record, so reload before reporting.
+      try { await loadData(); } catch {}
       notify(`Action failed: ${error.message}`, true);
     } finally {
       button.disabled = false;
     }
+  });
+
+  // Passenger wallet: top-up button
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-topup-card]');
+    if (!button || button.disabled) return;
+    openTopUpModal(button.dataset.topupCard);
+  });
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-buy-pass]');
+    if (!button || button.disabled) return;
+    buyMetroPass(button.dataset.cardId, button.dataset.buyPass, Number(button.dataset.price), button.dataset.label);
   });
 
   // Auth tabs
@@ -1703,33 +680,34 @@ function bindEvents() {
     try {
       await signIn($('#signin-user').value.trim(), $('#signin-password').value);
     } catch (error) {
-      $('#signin-error').textContent = error.message?.startsWith('Could not load metro data')
+      const message = error.message || '';
+      $('#signin-error').textContent = message.startsWith('Could not load metro data')
         ? 'Could not load metro data. Please sign in again and retry.'
-        : 'Invalid user ID or password.';
+        : error.status === 401 ? 'Invalid user ID or password.' : (message || 'Could not sign in.');
     }
   });
 
   $('#signup-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     $('#signup-error').textContent = '';
+    const signupForm = $('#signup-form');
+    clearFieldErrors(signupForm);
     try {
+      // Sign-up only creates passenger accounts; the server assigns the role.
       await signUp({
         userId: $('#signup-user').value.trim(),
         firstName: $('#signup-first').value.trim(),
         lastName: $('#signup-last').value.trim(),
         contact: $('#signup-contact').value.trim(),
-        password: $('#signup-password').value,
-        role: $('#signup-role').value
+        password: $('#signup-password').value
       });
     } catch (error) {
+      showFieldErrors(signupForm, error.fields, {
+        userId: 'signup-user', firstName: 'signup-first', lastName: 'signup-last',
+        contact: 'signup-contact', password: 'signup-password'
+      });
       $('#signup-error').textContent = error.message || 'Could not create account.';
     }
-  });
-
-  $('#signup-role').addEventListener('change', () => {
-    $('#signup-submit span').textContent = $('#signup-role').value === 'ADMIN'
-      ? 'Create admin account'
-      : 'Create passenger account';
   });
 
   $('#signout-button').addEventListener('click', () => {
@@ -1801,14 +779,25 @@ function bindEvents() {
   });
   $('#booking-passenger-count').addEventListener('change', () => { updateFareBreakdown(); updatePaymentSummary(); });
   $('#booking-type').addEventListener('change', () => { updateRouteRecap(); updateFareBreakdown(); updatePaymentSummary(); });
+  $$('input[name="payment-method"]').forEach((radio) => radio.addEventListener('change', updatePaymentMethodOptions));
+  $('#booking-passenger')?.addEventListener('change', updatePaymentMethodOptions);
   ['#booking-from', '#booking-to'].forEach((selector) => $(selector).addEventListener('change', () => { updateRouteRecap(); updateFareBreakdown(); updatePaymentSummary(); }));
 
   $('#booking-form').addEventListener('submit', async (event) => {
     event.preventDefault();
+    const paidWithCard = selectedPaymentMethod() === 'METRO_CARD';
     try {
       await createTicket();
     } catch (error) {
       notify(`Ticket could not be issued: ${error.message}`, true);
+      if (paidWithCard) {
+        // The card balance may have changed elsewhere; refresh it so the amounts shown are current.
+        try {
+          state.metroCards = await api('metro-cards');
+          renderMetroCard();
+          updatePaymentMethodOptions();
+        } catch {}
+      }
     }
   });
 
@@ -1818,12 +807,25 @@ function bindEvents() {
   $('#admin-station-search')?.addEventListener('input', (event) => renderAdminStations(event.target.value));
   $('#user-search')?.addEventListener('input', (event) => renderUsers(event.target.value));
 
-  // Admin: route creation also creates ordered endpoint mappings.
+  // Admin: compose route stops in order before saving the route.
+  $('#route-intermediate-add')?.addEventListener('click', () => addRouteStopEditorRow());
+  $('#route-intermediate-list')?.addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    const row = button?.closest('.route-stop-editor-row');
+    if (!row) return;
+    if (button.hasAttribute('data-stop-remove')) row.remove();
+    else if (button.dataset.stopMove === 'up' && row.previousElementSibling) row.parentElement.insertBefore(row, row.previousElementSibling);
+    else if (button.dataset.stopMove === 'down' && row.nextElementSibling) row.parentElement.insertBefore(row.nextElementSibling, row);
+    renumberRouteStopRows();
+  });
+  $('#route-form')?.addEventListener('reset', () => { $('#route-intermediate-list').replaceChildren(); });
   $('#route-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const routeId = $('#route-id').value.trim();
     const startStationId = $('#route-start').value;
     const endStationId = $('#route-end').value;
+    const intermediateStationIds = $$('#route-intermediate-list [data-route-stop-station]').map((select) => select.value);
+    const routeStationIds = [startStationId, ...intermediateStationIds, endStationId];
     const totalDistance = Number($('#route-distance').value);
     const estimatedTime = Number($('#route-time').value);
     if (!routeId || !$('#route-name').value.trim() || !startStationId || !endStationId || startStationId === endStationId
@@ -1838,6 +840,10 @@ function bindEvents() {
     }
     if (state.routes.some((route) => route.routeName?.trim().toLowerCase() === $('#route-name').value.trim().toLowerCase())) {
       notify('A route with that name already exists.', true);
+      return;
+    }
+    if (intermediateStationIds.some((stationId) => !stationId) || new Set(routeStationIds).size !== routeStationIds.length) {
+      notify('Choose a different station for every stop. Start and end stations cannot be repeated.', true);
       return;
     }
     let createdRoute = null;
@@ -1857,17 +863,19 @@ function bindEvents() {
           updatedAt: localDateTimeString()
         })
       });
-      for (const [stationId, sequenceNumber] of [[startStationId, 1], [endStationId, 2]]) {
+      for (const [sequenceNumber, stationId] of routeStationIds.entries()) {
         createdMappings.push(await api('route-stations', {
           method: 'POST',
-          body: JSON.stringify({ routeId, stationId, sequenceNumber })
+          body: JSON.stringify({ routeId, stationId, sequenceNumber: sequenceNumber + 1 })
         }));
       }
       event.target.reset();
       $('#route-color').value = '#7c3aed';
       await loadData();
       navigate('admin-routes');
-      notify('Route and its endpoint stops saved. Add intermediate stops to complete the line.');
+      notify(intermediateStationIds.length
+        ? `Route saved with ${intermediateStationIds.length} intermediate stop${intermediateStationIds.length === 1 ? '' : 's'}.`
+        : 'Route and endpoint stops saved.');
     } catch (error) {
       // Best-effort rollback if an endpoint mapping failed after route creation.
       for (const mapping of createdMappings.reverse()) {
@@ -1928,9 +936,19 @@ function bindEvents() {
     try {
       const stationId = $('#station-id').value.trim();
       const stationCode = $('#station-code').value.trim();
-      if (!stationId || !stationCode) { notify('Enter a station ID and name.', true); return; }
+      if (!stationId || !stationCode) { notify('Enter a station ID and station code.', true); return; }
       if (state.stations.some((item) => item.stationId === stationId)) { notify('That station ID already exists.', true); return; }
-      if (state.stations.some((item) => item.stationCode?.trim().toLowerCase() === stationCode.toLowerCase())) { notify('That station name already exists.', true); return; }
+      if (state.stations.some((item) => item.stationCode?.trim().toLowerCase() === stationCode.toLowerCase())) { notify('That station code already exists.', true); return; }
+      const latText = $('#station-lat').value.trim();
+      const lngText = $('#station-lng').value.trim();
+      const latitude = latText === '' ? null : Number(latText);
+      const longitude = lngText === '' ? null : Number(lngText);
+      if ((latitude !== null && (!Number.isFinite(latitude) || latitude < -90 || latitude > 90))
+          || (longitude !== null && (!Number.isFinite(longitude) || longitude < -180 || longitude > 180))) {
+        notify('Latitude must be between -90 and 90, and longitude between -180 and 180.', true); return;
+      }
+      const openedValue = $('#station-opened').value;
+      if (openedValue && !isValidDateOnly(openedValue)) { notify('Enter a valid opened date.', true); return; }
       const station = await api('stations', {
         method: 'POST',
         body: JSON.stringify({
@@ -1938,7 +956,9 @@ function bindEvents() {
           stationCode,
           address: $('#station-address').value.trim(),
           lineColor: $('#station-color').value,
-          openedDate: localDateString(),
+          ...(latitude !== null ? { latitude } : {}),
+          ...(longitude !== null ? { longitude } : {}),
+          openedDate: openedValue || localDateString(),
           isActive: true
         })
       });
@@ -1983,25 +1003,39 @@ function bindEvents() {
   // Admin: user
   $('#admin-user-form').addEventListener('submit', async (event) => {
     event.preventDefault();
+    const form = event.target;
+    clearFieldErrors(form);
+    const idMap = {
+      userId: 'admin-user-id', firstName: 'admin-user-first', lastName: 'admin-user-last',
+      contact: 'admin-user-contact', password: 'admin-user-password', role: 'admin-user-role'
+    };
     const userId = $('#admin-user-id').value.trim();
-    const nameParts = $('#admin-user-name').value.trim().split(/\s+/).filter(Boolean);
-    const [firstName, ...rest] = nameParts;
-    const lastName = rest.join(' ');
+    const firstName = $('#admin-user-first').value.trim();
+    const lastName = $('#admin-user-last').value.trim();
     const contact = $('#admin-user-contact').value.trim();
     const password = $('#admin-user-password').value;
-    if (!userId || userId.length < 3 || !firstName || !lastName || !contact || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact) || password.length < 6) {
-      notify('Enter a user ID (at least 3 characters), full name, valid email, and password (at least 6 characters).', true); return;
+    const problems = {};
+    if (userId.length < 3) problems.userId = 'User ID must be at least 3 characters.';
+    else if (state.users.some((item) => item.userId === userId)) problems.userId = 'That user ID already exists.';
+    if (!firstName) problems.firstName = 'First name is required.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) problems.contact = 'Enter a valid email address.';
+    if (password.length < 6 || password.length > 72) problems.password = 'Password must be 6 to 72 characters.';
+    if (Object.keys(problems).length) {
+      showFieldErrors(form, problems, idMap);
+      notify(Object.values(problems)[0], true);
+      return;
     }
-    if (state.users.some((item) => item.userId === userId)) { notify('That user ID already exists.', true); return; }
     try {
       const user = await api('users', {
         method: 'POST',
         body: JSON.stringify({
           userId,
           firstName,
-          lastName,
+          lastName: lastName || null,
           contact,
           role: $('#admin-user-role').value,
+          stationId: $('#admin-user-station').value || null,
+          hireDate: $('#admin-user-hire-date').value || null,
           password,
           registrationDate: localDateString(),
           isActive: true
@@ -2012,6 +1046,8 @@ function bindEvents() {
       refreshAll();
       notify('User saved');
     } catch (error) {
+      showFieldErrors(form, error.fields, idMap);
+      if (error.status === 409) loadData().catch(() => {});
       notify(`Could not save user: ${error.message}`, true);
     }
   });
@@ -2095,12 +1131,18 @@ function bindEvents() {
         notify(`The selected departure date is ${departureDay}. Choose that day of week or change the date.`, true);
         return;
       }
-      const validFrom = localDateString(departure);
+      const departureDate = localDateString(departure);
+      const validFrom = $('#schedule-valid-from').value || departureDate;
+      if (!isValidDateOnly(validFrom)) { notify('Enter a valid "Valid from" date.', true); return; }
+      if (parseDateValue(validFrom) > parseDateValue(departureDate)) {
+        notify('"Valid from" cannot be after the departure date.', true);
+        return;
+      }
       const fallbackEnd = new Date(departure.getTime());
       fallbackEnd.setMonth(fallbackEnd.getMonth() + 6);
       const validTo = $('#schedule-valid-to').value || localDateString(fallbackEnd);
       if (parseDateValue(validTo) < parseDateValue(validFrom)) {
-        notify('The schedule end date must be on or after its departure date.', true);
+        notify('"Valid through" must be on or after "Valid from".', true);
         return;
       }
       const schedule = await api('schedules', {
@@ -2129,36 +1171,64 @@ function bindEvents() {
   });
 
   // Admin: metro card
+  const setMetroCardFormDefaults = () => {
+    const today = new Date();
+    const expiry = new Date(today.getFullYear() + 3, today.getMonth(), today.getDate());
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    if ($('#metrocard-issue')) $('#metrocard-issue').value = localDateString(today);
+    if ($('#metrocard-expiry')) {
+      $('#metrocard-expiry').value = localDateString(expiry);
+      $('#metrocard-expiry').min = localDateString(tomorrow);
+    }
+    if ($('#metrocard-active')) $('#metrocard-active').checked = true;
+  };
+  setMetroCardFormDefaults();
   $('#metrocard-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
+    const form = event.target;
+    clearFieldErrors(form);
+    const idMap = {
+      cardId: 'metrocard-id', passengerId: 'metrocard-passenger', balance: 'metrocard-balance',
+      issueDate: 'metrocard-issue', expiryDate: 'metrocard-expiry'
+    };
     const cardId = $('#metrocard-id').value.trim();
     const passengerId = $('#metrocard-passenger').value;
-    const balance = Number($('#metrocard-balance').value);
+    const balanceText = $('#metrocard-balance').value;
+    const balance = Number(balanceText);
+    const issueDate = $('#metrocard-issue').value;
+    const expiryDate = $('#metrocard-expiry').value;
+    const isActive = $('#metrocard-active').checked;
     const passenger = state.users.find((item) => item.userId === passengerId && item.role !== 'ADMIN' && item.isActive !== false);
-    if (!cardId || !passenger || !Number.isFinite(balance) || balance < 0) {
-      notify('Enter a card ID, choose an active passenger, and provide a non-negative opening balance.', true); return;
+    const problems = {};
+    if (!cardId) problems.cardId = 'Enter a card ID.';
+    else if (state.metroCards.some((item) => item.cardId === cardId)) problems.cardId = 'That metro card ID already exists.';
+    if (!passenger) problems.passengerId = 'Choose an active passenger.';
+    else if (isActive && state.metroCards.some((item) => item.passengerId === passengerId && item.isActive !== false)) {
+      problems.passengerId = 'This passenger already has an active metro card.';
     }
-    if (state.metroCards.some((item) => item.cardId === cardId)) { notify('That metro card ID already exists.', true); return; }
-    if (state.metroCards.some((item) => item.passengerId === passengerId && item.isActive !== false)) { notify('This passenger already has an active metro card.', true); return; }
+    if (balanceText === '' || !Number.isFinite(balance) || balance < 0) problems.balance = 'Enter an opening balance of 0 or more.';
+    if (!isValidDateOnly(issueDate)) problems.issueDate = 'Enter a valid issue date.';
+    if (!isValidDateOnly(expiryDate)) problems.expiryDate = 'Enter a valid expiry date.';
+    else if (isValidDateOnly(issueDate) && parseDateValue(expiryDate) <= parseDateValue(issueDate)) problems.expiryDate = 'Expiry must be after the issue date.';
+    else if (parseDateValue(expiryDate) < startOfToday()) problems.expiryDate = 'Expiry cannot be in the past.';
+    if (Object.keys(problems).length) {
+      showFieldErrors(form, problems, idMap);
+      notify(Object.values(problems)[0], true);
+      return;
+    }
     try {
-      const today = localDateString();
       const card = await api('metro-cards', {
         method: 'POST',
-        body: JSON.stringify({
-          cardId,
-          passengerId,
-          balance,
-          issueDate: today,
-          expiryDate: localDateString(new Date(new Date().getFullYear() + 3, new Date().getMonth(), new Date().getDate())),
-          createdAt: localDateTimeString(),
-          isActive: true
-        })
+        body: JSON.stringify({ cardId, passengerId, balance, issueDate, expiryDate, isActive })
       });
       state.metroCards.push(card);
       event.target.reset();
+      setMetroCardFormDefaults();
       refreshAll();
       notify('Metro card issued');
     } catch (error) {
+      showFieldErrors(form, error.fields, idMap);
+      if (error.status === 409) loadData().catch(() => {});
       notify(`Could not issue card: ${error.message}`, true);
     }
   });
@@ -2228,7 +1298,10 @@ loadData().catch((error) => {
   state.currentUser = null;
   localStorage.removeItem('metroUser');
   setupShell();
-  notify(`Could not load metro data: ${error.message}`, true);
+  const message = window.location.protocol === 'file:'
+    ? 'Start the preview server, then open http://localhost:8080 to sign in and load metro data.'
+    : `Could not load metro data: ${error.message}`;
+  notify(message, true);
 });
 setInterval(() => {
   if (!state.currentUser) return;

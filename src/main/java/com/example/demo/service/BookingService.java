@@ -7,6 +7,7 @@ import com.example.demo.dto.BookingRequest;
 import com.example.demo.dto.BookingResult;
 import com.example.demo.entity.Fare;
 import com.example.demo.entity.MetroCard;
+import com.example.demo.entity.MetroCardTransaction;
 import com.example.demo.entity.Payment;
 import com.example.demo.entity.Route;
 import com.example.demo.entity.RouteStation;
@@ -14,7 +15,9 @@ import com.example.demo.entity.Station;
 import com.example.demo.entity.Ticket;
 import com.example.demo.entity.User;
 import com.example.demo.repository.FareRepository;
+import com.example.demo.repository.MetroCardPassRepository;
 import com.example.demo.repository.MetroCardRepository;
+import com.example.demo.repository.MetroCardTransactionRepository;
 import com.example.demo.repository.PaymentRepository;
 import com.example.demo.repository.RouteRepository;
 import com.example.demo.repository.RouteStationRepository;
@@ -47,10 +50,13 @@ public class BookingService {
     private final TicketRepository tickets;
     private final PaymentRepository payments;
     private final MetroCardRepository metroCards;
+    private final MetroCardPassRepository metroCardPasses;
+    private final MetroCardTransactionRepository metroCardTransactions;
 
     public BookingService(UserRepository users, StationRepository stations, RouteRepository routes,
                           RouteStationRepository routeStations, FareRepository fares, TicketRepository tickets,
-                          PaymentRepository payments, MetroCardRepository metroCards) {
+                          PaymentRepository payments, MetroCardRepository metroCards,
+                          MetroCardPassRepository metroCardPasses, MetroCardTransactionRepository metroCardTransactions) {
         this.users = users;
         this.stations = stations;
         this.routes = routes;
@@ -59,6 +65,8 @@ public class BookingService {
         this.tickets = tickets;
         this.payments = payments;
         this.metroCards = metroCards;
+        this.metroCardPasses = metroCardPasses;
+        this.metroCardTransactions = metroCardTransactions;
     }
 
     /** One transactional checkout: validate the journey, calculate the fare on the server, optionally charge the
@@ -139,13 +147,21 @@ public class BookingService {
             if (payingCard.expiryDate != null && payingCard.expiryDate.isBefore(LocalDate.now())) {
                 throw badRequest("Metro card " + payingCard.cardId + " expired on " + payingCard.expiryDate + ".");
             }
-            BigDecimal available = payingCard.balance == null ? BigDecimal.ZERO : payingCard.balance;
-            if (available.compareTo(total) < 0) {
-                throw badRequest("Insufficient metro card balance: " + available.setScale(2, java.math.RoundingMode.HALF_UP)
-                        + " available, " + total + " needed. Top up the card and try again.");
+            // An active time pass covers the fare: nothing is charged and the payment is recorded as METRO_CARD_PASS.
+            boolean coveredByTimePass = !metroCardPasses.findActiveByCardId(payingCard.cardId, now).isEmpty();
+            if (coveredByTimePass) {
+                total = BigDecimal.ZERO.setScale(2);
+                paymentMethod = "METRO_CARD_PASS";
+            } else {
+                BigDecimal available = payingCard.balance == null ? BigDecimal.ZERO : payingCard.balance;
+                if (available.compareTo(total) < 0) {
+                    throw badRequest("Insufficient metro card balance: " + available.setScale(2, java.math.RoundingMode.HALF_UP)
+                            + " available, " + total + " needed. Top up the card and try again.");
+                }
+                payingCard.balance = available.subtract(total);
+                metroCards.save(payingCard);
+                recordCardTransaction(payingCard, "FARE", "Ticket " + ticketType + " fare", total, payingCard.balance);
             }
-            payingCard.balance = available.subtract(total);
-            metroCards.save(payingCard);
         }
 
         Ticket ticket = new Ticket();
@@ -175,6 +191,18 @@ public class BookingService {
         payment.metroCardId = payingCard == null ? null : payingCard.cardId;
         Payment savedPayment = payments.save(payment);
         return new BookingResult(savedTicket, savedPayment, total, payingCard == null ? null : payingCard.balance);
+    }
+
+    private void recordCardTransaction(MetroCard card, String type, String description, BigDecimal amount, BigDecimal balance) {
+        MetroCardTransaction transaction = new MetroCardTransaction();
+        transaction.transactionId = "MT-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase();
+        transaction.cardId = card.cardId;
+        transaction.transactionType = type;
+        transaction.description = description;
+        transaction.amount = amount;
+        transaction.balanceAfter = balance;
+        transaction.createdAt = LocalDateTime.now();
+        metroCardTransactions.save(transaction);
     }
 
     private String uniqueId(String prefix, java.util.function.Predicate<String> exists) {
